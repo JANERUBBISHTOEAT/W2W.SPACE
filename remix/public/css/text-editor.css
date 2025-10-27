@@ -1,0 +1,55 @@
+#text-editor-container {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#text-editor-header {
+  padding: 1rem;
+  border-bottom: 1px solid #e3e3e3;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f7f7f7;
+}
+
+#text-editor-header h2 {
+  margin: 0;
+}
+
+#text-editor-header button {
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  background: #3992ff;
+  color: white;
+  border: none;
+  border-radius: 8px;
+}
+
+#text-editor-header button:hover {
+  background: #2a7ae9;
+}
+
+#text-editor-header button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+#text-editor-wrapper {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
+#text-editor-footer {
+  padding: 0.5rem 1rem;
+  border-top: 1px solid #e3e3e3;
+  background: #f7f7f7;
+  font-size: 0.875rem;
+  color: #666;
+}
+
+.editor-loading {
+  padding: 2rem;
+  text-align: center;
+}
