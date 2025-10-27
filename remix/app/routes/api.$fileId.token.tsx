@@ -33,14 +33,26 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       });
     }
 
-    // Try get magnet first
-    const magnet = await HashMap.get(formObj.magnet as string);
-    if (magnet) {
-      return json({ token: magnet, magnet: formObj.magnet });
+    // Try get existing file by magnet first
+    const user = await getUserSession(request);
+    const visitor = await getVisitorSession(request);
+    const sub = user?.sub || visitor?.sub;
+
+    let existingFile = null;
+    if (sub) {
+      const { getFiles } = await import("~/utils/data.server");
+      const files = await getFiles(sub);
+      existingFile = files.find((f) => f.magnet === formObj.magnet);
     }
 
-    // Generate & save token
-    const token = await HashMap.genToken(formObj.magnet as string);
+    if (existingFile && existingFile.token) {
+      return json({ token: existingFile.token, magnet: formObj.magnet });
+    }
+
+    // Generate & save token (using fileId, not magnet)
+    // First create a temporary file to get fileId
+    const fileId = Math.random().toString(36).substring(2, 9);
+    const token = await HashMap.genToken(fileId);
     console.log("Token:", token);
 
     let newfile;
@@ -81,7 +93,24 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     }
 
     // Otherwise try file token
-    const magnet = await HashMap.get(token);
+    const fileId = await HashMap.getFile(token);
+
+    // Get file record to retrieve magnet
+    let magnet = null;
+    let fileData = null;
+    if (fileId) {
+      // Get userId first
+      const user = await getUserSession(request);
+      const visitor = await getVisitorSession(request);
+      const sub = user?.sub || visitor?.sub;
+
+      if (sub) {
+        const { getFiles } = await import("~/utils/data.server");
+        const files = await getFiles(sub);
+        fileData = files.find((f) => f.id === fileId);
+        magnet = fileData?.magnet || null;
+      }
+    }
 
     let newfile;
     if (params.fileId === "new" && magnet)

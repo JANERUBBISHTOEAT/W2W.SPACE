@@ -92,11 +92,21 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     }
 
     // Otherwise try file token
-    const magnet = await HashMap.get(token);
+    // For backward compatibility, HashMap.get() returns fileId which we can use to look up the magnet
+    const result = await HashMap.getBoth(token);
+    if (result.fileId) {
+      return json({
+        intent: "acquireMagnet",
+        fileId: result.fileId,
+        magnet: null, // Will be retrieved in client code
+        type: "file",
+      });
+    }
+
     return json({
       intent: "acquireMagnet",
-      magnet: magnet,
-      type: magnet ? "file" : null,
+      magnet: null,
+      type: null,
     });
   }
 };

@@ -55,7 +55,7 @@ export default class HashMap {
 
   static async set(
     token: string,
-    magnet: string
+    fileId: string
     // expiry: number = 60 * 60
   ): Promise<void | null> {
     console.info("Redis health:", ((await this.getKeysCnt()) || -1) / 10 ** 6);
@@ -63,7 +63,7 @@ export default class HashMap {
     await redis.hset(
       "unifiedTokenMap",
       token,
-      JSON.stringify({ type: "file", magnet: magnet })
+      JSON.stringify({ type: "file", id: fileId })
     );
     // await redis.expire("unifiedTokenMap", expiry);
   }
@@ -73,7 +73,11 @@ export default class HashMap {
     const data = await redis.hget("unifiedTokenMap", token);
     if (data) {
       const parsed = JSON.parse(data);
-      return parsed.type === "file" ? parsed.magnet : null;
+      // For backward compatibility, return the full data structure
+      // This method is used by old code that expects magnet
+      if (parsed.type === "file") {
+        return parsed.magnet || parsed.id;
+      }
     }
     return null;
   }
@@ -88,11 +92,21 @@ export default class HashMap {
     await redis.hdel("unifiedTokenMap", token);
   }
 
-  static async genToken(magnet: string): Promise<string | null> {
-    if (!redis || !magnet) return "";
-    const token_str = await HashMap.genKey(magnet);
-    HashMap.set(token_str, magnet);
+  static async genToken(fileId: string): Promise<string | null> {
+    if (!redis || !fileId) return "";
+    const token_str = await HashMap.genKey(fileId);
+    await HashMap.set(token_str, fileId);
     return token_str;
+  }
+
+  static async getFile(token: string): Promise<string | null> {
+    if (!redis) return null;
+    const data = await redis.hget("unifiedTokenMap", token);
+    if (data) {
+      const parsed = JSON.parse(data);
+      return parsed.type === "file" ? parsed.id : null;
+    }
+    return null;
   }
 
   // Unified token storage with type field
@@ -118,20 +132,20 @@ export default class HashMap {
   // Get both token mappings simultaneously
   static async getBoth(token: string): Promise<{
     textId: string | null;
-    magnet: string | null;
+    fileId: string | null;
     type: string | null;
   }> {
-    if (!redis) return { textId: null, magnet: null, type: null };
+    if (!redis) return { textId: null, fileId: null, type: null };
     const data = await redis.hget("unifiedTokenMap", token);
-    if (!data) return { textId: null, magnet: null, type: null };
+    if (!data) return { textId: null, fileId: null, type: null };
 
     const parsed = JSON.parse(data);
     if (parsed.type === "text") {
-      return { textId: parsed.id, magnet: null, type: "text" };
+      return { textId: parsed.id, fileId: null, type: "text" };
     } else if (parsed.type === "file") {
-      return { textId: null, magnet: parsed.magnet, type: "file" };
+      return { textId: null, fileId: parsed.id, type: "file" };
     }
-    return { textId: null, magnet: null, type: null };
+    return { textId: null, fileId: null, type: null };
   }
 
   static async generateTextToken(textId: string): Promise<string | null> {

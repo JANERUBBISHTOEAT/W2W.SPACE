@@ -62,11 +62,14 @@ const fileService = {
     const id = values.id || Math.random().toString(36).substring(2, 9);
     const createdAt = new Date().toISOString();
     const newFile = { id, createdAt, ...values };
-    if (newFile.magnet) {
-      const token_str = await HashMap.genToken(newFile.magnet);
+
+    // Generate token for the file (using fileId, not magnet)
+    if (id) {
+      const token_str = await HashMap.genToken(id);
       newFile.token = token_str ?? undefined;
       console.log("Updated token:", newFile.token);
     }
+
     await redis.hset(userFilesKey(userId), id, JSON.stringify(newFile));
     return newFile;
   },
@@ -93,11 +96,14 @@ const fileService = {
     invariant(file, `No file found for ${id}`);
 
     const updatedFile = { ...file, ...values };
-    if (updatedFile.magnet) {
-      const token_str = await HashMap.genToken(updatedFile.magnet);
+
+    // Generate token if not exists
+    if (!updatedFile.token) {
+      const token_str = await HashMap.genToken(id);
       updatedFile.token = token_str ?? undefined;
       console.log("Updated token:", updatedFile.token);
     }
+
     await redis.hset(userFilesKey(userId), id, JSON.stringify(updatedFile));
     return updatedFile;
   },
