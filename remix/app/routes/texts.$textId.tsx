@@ -12,7 +12,14 @@ import MonacoEditor from "@monaco-editor/react";
 import toastr from "toastr";
 import invariant from "tiny-invariant";
 import type { TextRecord } from "~/utils/text.server";
-import { getText, updateText, deleteText } from "~/utils/text.server";
+import {
+  getText,
+  getTextByTextId,
+  updateText,
+  updateTextByTextId,
+  deleteText,
+  deleteTextByTextId,
+} from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import Swal from "sweetalert2";
 import { TEXT_MAX_SIZE, FIELD_MAX_SIZE } from "~/utils/constants";
@@ -27,7 +34,18 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
   const userId = user?.sub || visitor?.sub;
-  const text = await getText(userId, params.textId);
+
+  // Try to get text by userId first, if that fails, search globally by textId
+  let text = null;
+  if (userId) {
+    text = await getText(userId, params.textId);
+  }
+
+  // If not found by userId, search globally by textId
+  if (!text) {
+    text = await getTextByTextId(params.textId);
+  }
+
   if (!text) {
     return redirect("/?message=Text+Not+Found");
   }
@@ -42,7 +60,6 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   }
 
   // Update access statistics (DO NOT update lastEditedAt on access)
-  const { updateText } = await import("~/utils/text.server");
   const now = new Date().toISOString();
   const updatedText = {
     ...text,
@@ -50,7 +67,19 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     accessCount: (text.accessCount || 0) + 1,
     // Explicitly do NOT update lastEditedAt here
   };
-  await updateText(userId, params.textId, updatedText);
+
+  // Update access statistics using the appropriate method
+  try {
+    if (userId) {
+      await updateText(userId, params.textId, updatedText);
+    } else {
+      // Update globally by textId when user is logged out
+      await updateTextByTextId(params.textId, updatedText);
+    }
+  } catch (error) {
+    // If update fails, just continue with the text data
+    console.log("Failed to update access statistics:", error);
+  }
 
   return json({ text: updatedText });
 };
@@ -101,13 +130,26 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     }
 
     const now = new Date().toISOString();
-    await updateText(userId, params.textId, {
-      content,
-      language,
-      title,
-      updateCount: updateCount ? parseInt(updateCount as string) : undefined,
-      lastEditedAt: now,
-    });
+
+    // Try to update with userId first, if userId exists
+    if (userId) {
+      await updateText(userId, params.textId, {
+        content,
+        language,
+        title,
+        updateCount: updateCount ? parseInt(updateCount as string) : undefined,
+        lastEditedAt: now,
+      });
+    } else {
+      // Otherwise, update globally by textId
+      await updateTextByTextId(params.textId, {
+        content,
+        language,
+        title,
+        updateCount: updateCount ? parseInt(updateCount as string) : undefined,
+        lastEditedAt: now,
+      });
+    }
 
     return json({
       success: true,
@@ -116,7 +158,11 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   }
 
   if (intent === "delete") {
-    await deleteText(userId, params.textId);
+    if (userId) {
+      await deleteText(userId, params.textId);
+    } else {
+      await deleteTextByTextId(params.textId);
+    }
     return redirect("/");
   }
 

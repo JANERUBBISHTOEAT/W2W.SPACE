@@ -12,6 +12,7 @@ import {
   ScrollRestoration,
   useLoaderData,
   useNavigation,
+  useSubmit,
 } from "@remix-run/react";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "toastr/build/toastr.min.css";
@@ -128,6 +129,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function App() {
   const { allItems: allItems, q } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
+  const submit = useSubmit();
   const searching =
     navigation.location &&
     new URLSearchParams(navigation.location.search).has("q");

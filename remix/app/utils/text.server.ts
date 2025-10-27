@@ -92,6 +92,19 @@ const textService = {
     return null;
   },
 
+  async getByTextId(textId: string): Promise<TextRecord | null> {
+    // Search across all users for this textId
+    const userIds = await redis.keys("user:*:texts");
+    for (const key of userIds) {
+      const textData = await redis.hget(key, textId);
+      if (textData) {
+        const text: TextRecord = JSON.parse(textData);
+        return text;
+      }
+    }
+    return null;
+  },
+
   async create(userId: string, values: TextMutation): Promise<TextRecord> {
     const id = values.id || Math.random().toString(36).substring(2, 9);
     const now = new Date().toISOString();
@@ -138,12 +151,63 @@ const textService = {
     return updatedText;
   },
 
+  async setByTextId(
+    id: string,
+    values: TextMutation
+  ): Promise<TextRecord | null> {
+    // Find which user owns this text
+    const userIds = await redis.keys("user:*:texts");
+    for (const key of userIds) {
+      const textData = await redis.hget(key, id);
+      if (textData) {
+        const text: TextRecord = JSON.parse(textData);
+
+        const updatedText: TextRecord = {
+          ...text,
+          ...values,
+          updatedAt: values.lastEditedAt
+            ? new Date().toISOString()
+            : text.updatedAt,
+        };
+        await redis.hset(key, id, JSON.stringify(updatedText));
+        return updatedText;
+      }
+    }
+    return null;
+  },
+
+  async destroyByTextId(id: string): Promise<null> {
+    // Find which user owns this text
+    const userIds = await redis.keys("user:*:texts");
+    for (const key of userIds) {
+      const textData = await redis.hget(key, id);
+      if (textData) {
+        const text: TextRecord = JSON.parse(textData);
+        if (text.token) {
+          // Update token status to "deleted"
+          const data = await redis.hget("unifiedTokenMap", text.token);
+          if (data) {
+            const parsed = JSON.parse(data);
+            parsed.status = "deleted";
+            await redis.hset(
+              "unifiedTokenMap",
+              text.token,
+              JSON.stringify(parsed)
+            );
+          }
+        }
+        await redis.hdel(key, id);
+        return null;
+      }
+    }
+    return null;
+  },
+
   async destroy(userId: string, id: string): Promise<null> {
     // Get text to get token
     const text = await this.get(userId, id);
     if (text && text.token) {
       // Update token status to "deleted" instead of deleting
-      const HashMap = (await import("./hashmap.server")).default;
       const data = await redis.hget("unifiedTokenMap", text.token);
       if (data) {
         const parsed = JSON.parse(data);
@@ -187,6 +251,10 @@ export async function getTextByToken(token: string) {
   return textService.getByToken(token);
 }
 
+export async function getTextByTextId(textId: string) {
+  return textService.getByTextId(textId);
+}
+
 export async function updateText(
   userId: string,
   textId: string,
@@ -205,8 +273,19 @@ export async function updateText(
   return updatedText;
 }
 
+export async function updateTextByTextId(
+  textId: string,
+  updates: TextMutation
+) {
+  return textService.setByTextId(textId, updates);
+}
+
 export async function deleteText(userId: string, id: string) {
   await textService.destroy(userId, id);
+}
+
+export async function deleteTextByTextId(id: string) {
+  await textService.destroyByTextId(id);
 }
 
 export async function mergeTexts(

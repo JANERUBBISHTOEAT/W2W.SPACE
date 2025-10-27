@@ -76,6 +76,19 @@ const fileService = {
     return file ? JSON.parse(file) : null;
   },
 
+  async getByFileId(fileId: string): Promise<FileRecord | null> {
+    // Search across all users for this fileId
+    const userIds = await redis.keys("user:*:files");
+    for (const key of userIds) {
+      const fileData = await redis.hget(key, fileId);
+      if (fileData) {
+        const file: FileRecord = JSON.parse(fileData);
+        return file;
+      }
+    }
+    return null;
+  },
+
   async create(userId: string, values: FileMutation): Promise<FileRecord> {
     // * Deduplicate here as `.create` should be duplicate-free
     const duplicateFile = await fileService.get_dup(userId, values);
@@ -160,6 +173,59 @@ const fileService = {
     await redis.hdel(userFilesKey(userId), id);
     return null;
   },
+
+  async setByFileId(
+    id: string,
+    values: FileMutation
+  ): Promise<FileRecord | null> {
+    // Find which user owns this file
+    const userIds = await redis.keys("user:*:files");
+    for (const key of userIds) {
+      const fileData = await redis.hget(key, id);
+      if (fileData) {
+        const file: FileRecord = JSON.parse(fileData);
+
+        const updatedFile = { ...file, ...values };
+
+        // Generate token if not exists
+        if (!updatedFile.token) {
+          const token_str = await HashMap.genToken(id);
+          updatedFile.token = token_str ?? undefined;
+        }
+
+        await redis.hset(key, id, JSON.stringify(updatedFile));
+        return updatedFile;
+      }
+    }
+    return null;
+  },
+
+  async destroyByFileId(id: string): Promise<null> {
+    // Find which user owns this file
+    const userIds = await redis.keys("user:*:files");
+    for (const key of userIds) {
+      const fileData = await redis.hget(key, id);
+      if (fileData) {
+        const file: FileRecord = JSON.parse(fileData);
+        if (file.token) {
+          // Update token status to "deleted"
+          const data = await redis.hget("unifiedTokenMap", file.token);
+          if (data) {
+            const parsed = JSON.parse(data);
+            parsed.status = "deleted";
+            await redis.hset(
+              "unifiedTokenMap",
+              file.token,
+              JSON.stringify(parsed)
+            );
+          }
+        }
+        await redis.hdel(key, id);
+        return null;
+      }
+    }
+    return null;
+  },
 };
 
 export async function getFiles(userId: string, query?: string | null) {
@@ -181,6 +247,10 @@ export async function createEmptyFile(userId: string, owner: boolean = true) {
 
 export async function getFile(userId: string, id: string) {
   return fileService.get(userId, id);
+}
+
+export async function getFileByFileId(fileId: string) {
+  return fileService.getByFileId(fileId);
 }
 
 export async function updateFile(
@@ -220,6 +290,17 @@ export async function updateFile(
 
 export async function deleteFile(userId: string, id: string) {
   await fileService.destroy(userId, id);
+}
+
+export async function updateFileByFileId(
+  fileId: string,
+  updates: FileMutation
+) {
+  return fileService.setByFileId(fileId, updates);
+}
+
+export async function deleteFileByFileId(fileId: string) {
+  await fileService.destroyByFileId(fileId);
 }
 
 // Merge visitor files to existing user files

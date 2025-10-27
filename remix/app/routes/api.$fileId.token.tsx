@@ -99,17 +99,10 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     let magnet = null;
     let fileData = null;
     if (fileId) {
-      // Get userId first
-      const user = await getUserSession(request);
-      const visitor = await getVisitorSession(request);
-      const sub = user?.sub || visitor?.sub;
-
-      if (sub) {
-        const { getFiles } = await import("~/utils/data.server");
-        const files = await getFiles(sub);
-        fileData = files.find((f) => f.id === fileId);
-        magnet = fileData?.magnet || null;
-      }
+      // Search globally by fileId to find magnet (not dependent on userId)
+      const { getFileByFileId } = await import("~/utils/data.server");
+      fileData = await getFileByFileId(fileId);
+      magnet = fileData?.magnet || null;
     }
 
     let newfile;

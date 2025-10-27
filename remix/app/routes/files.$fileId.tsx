@@ -8,7 +8,7 @@ import invariant from "tiny-invariant";
 import toastr from "toastr";
 import { fileIconMap } from "~/utils/constants";
 import type { FileRecord } from "~/utils/data.server";
-import { getFile, updateFile } from "~/utils/data.server";
+import { getFile, getFileByFileId, updateFile } from "~/utils/data.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import { prettyBytes } from "~/utils/functions";
 
@@ -16,7 +16,19 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   invariant(params.fileId, "Missing fileId param");
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
-  const file = await getFile(user?.sub || visitor?.sub, params.fileId);
+  const userId = user?.sub || visitor?.sub;
+
+  // Try to get file by userId first, if that fails, search globally by fileId
+  let file = null;
+  if (userId) {
+    file = await getFile(userId, params.fileId);
+  }
+
+  // If not found by userId, search globally by fileId
+  if (!file) {
+    file = await getFileByFileId(params.fileId);
+  }
+
   if (!file) {
     return redirect("/?message=Page+Not+Found");
   }
