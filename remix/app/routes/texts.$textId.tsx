@@ -77,7 +77,12 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   // Update access statistics using the appropriate method
   try {
     if (userId) {
-      await updateText(userId, params.textId, updatedText);
+      try {
+        await updateText(userId, params.textId, updatedText);
+      } catch (error) {
+        // If user is not owner, use global update
+        await updateTextByTextId(params.textId, updatedText);
+      }
     } else {
       // Update globally by textId when user is logged out
       await updateTextByTextId(params.textId, updatedText);
@@ -87,7 +92,30 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     console.log("Failed to update access statistics:", error);
   }
 
-  return json({ text: updatedText });
+  // Re-fetch the latest text data to ensure updateCount is current
+  let latestText = updatedText;
+  try {
+    if (userId) {
+      const fetched = await getText(userId, params.textId);
+      if (fetched) {
+        latestText = { ...fetched, owner: isOwner };
+      } else {
+        const globalFetched = await getTextByTextId(params.textId);
+        if (globalFetched) {
+          latestText = { ...globalFetched, owner: isOwner };
+        }
+      }
+    } else {
+      const globalFetched = await getTextByTextId(params.textId);
+      if (globalFetched) {
+        latestText = { ...globalFetched, owner: false };
+      }
+    }
+  } catch (error) {
+    console.log("Failed to re-fetch latest text:", error);
+  }
+
+  return json({ text: latestText });
 };
 
 interface ActionData {
@@ -139,13 +167,37 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
     // Try to update with userId first, if userId exists
     if (userId) {
-      await updateText(userId, params.textId, {
-        content,
-        language,
-        title,
-        updateCount: updateCount ? parseInt(updateCount as string) : undefined,
-        lastEditedAt: now,
-      });
+      try {
+        await updateText(userId, params.textId, {
+          content,
+          language,
+          title,
+          updateCount: updateCount
+            ? parseInt(updateCount as string)
+            : undefined,
+          lastEditedAt: now,
+        });
+      } catch (error) {
+        // If updateText fails (user is not owner), use global update instead
+        console.log("User is not owner, using global update:", error);
+        try {
+          await updateTextByTextId(params.textId, {
+            content,
+            language,
+            title,
+            updateCount: updateCount
+              ? parseInt(updateCount as string)
+              : undefined,
+            lastEditedAt: now,
+          });
+        } catch (globalError) {
+          console.error("Failed to update text globally:", globalError);
+          return json({
+            success: false,
+            message: "Failed to save text",
+          });
+        }
+      }
     } else {
       // Otherwise, update globally by textId
       await updateTextByTextId(params.textId, {
@@ -207,12 +259,30 @@ export default function TextEditor() {
     text?.title || text?.token || "Untitled Text"
   );
 
+  // Track last update to prevent overwriting local edits
+  const lastUpdateCountRef = useRef(text?.updateCount || 0);
+  const isInitialMount = useRef(true);
+
   // Update content, title, and language when text changes (from server)
+  // But only if it's a new update (not the same version)
   useEffect(() => {
     if (text) {
-      setContent(text.content || "# Welcome\n\nStart typing...");
-      setLanguage(text.language || "markdown");
-      setTitle(text.title || text.token || "Untitled Text");
+      const currentUpdateCount = text.updateCount || 0;
+      const lastUpdateCount = lastUpdateCountRef.current;
+
+      // Only update if it's a new version (higher updateCount)
+      if (currentUpdateCount > lastUpdateCount) {
+        setContent(text.content || "# Welcome\n\nStart typing...");
+        setLanguage(text.language || "markdown");
+        setTitle(text.title || text.token || "Untitled Text");
+        lastUpdateCountRef.current = currentUpdateCount;
+      } else if (isInitialMount.current) {
+        // Only set initial values once on mount
+        isInitialMount.current = false;
+        setContent(text.content || "# Welcome\n\nStart typing...");
+        setLanguage(text.language || "markdown");
+        setTitle(text.title || text.token || "Untitled Text");
+      }
     }
   }, [text]);
   const [isSaving, setIsSaving] = useState(false);
@@ -227,7 +297,7 @@ export default function TextEditor() {
     formData.append("language", language);
     formData.append("title", title);
     formData.append("updateCount", String((text.updateCount || 0) + 1));
-    submit(formData, { method: "post" });
+    submit(formData, { method: "post", fetcherKey: "save-text" });
   }, [content, language, title, text.updateCount, submit]);
 
   const handleDelete = useCallback(async () => {
@@ -246,21 +316,18 @@ export default function TextEditor() {
   }, [submit]);
 
   useEffect(() => {
-    if (actionData?.success) {
+    if (actionData) {
       setIsSaving(false);
-      toastr.success(actionData.message || "Saved successfully");
+      if (actionData.success) {
+        toastr.success(actionData.message || "Saved successfully");
+      } else if (actionData.message) {
+        toastr.error(actionData.message);
+      }
     }
   }, [actionData]);
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
-    try {
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        handleSave();
-      });
-    } catch (error) {
-      console.error("Error setting up editor:", error);
-    }
   };
 
   const handleEditorChange = (value: string | undefined) => {
@@ -269,18 +336,45 @@ export default function TextEditor() {
     }
   };
 
+  // Handle keyboard shortcuts globally to prevent browser save dialog
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "s") {
-        e.preventDefault();
-        handleSave();
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        // Only prevent if focused on the page (not in input fields outside editor)
+        const target = e.target as HTMLElement;
+        const isTitleInput =
+          target.tagName === "INPUT" &&
+          target.getAttribute("placeholder") === "Untitled Text";
+        const isTokenInput = target.getAttribute("aria-label") === "Token";
+
+        // Don't handle if typing in title/token inputs
+        if (!isTitleInput && !isTokenInput) {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log("Ctrl+S pressed, saving from editor");
+
+          // Get latest content directly from Monaco editor instance
+          const editor = editorRef.current as any;
+          const currentContent = editor?.getValue() || content;
+
+          setIsSaving(true);
+          const formData = new FormData();
+          formData.append("intent", "save");
+          formData.append("content", currentContent); // Use content from editor
+          formData.append("language", language);
+          formData.append("title", title);
+          formData.append("updateCount", String((text.updateCount || 0) + 1));
+          submit(formData, { method: "post", fetcherKey: "save-text" });
+          return false;
+        }
       }
     };
-    document.addEventListener("keydown", handleKeyDown);
+
+    document.addEventListener("keydown", handleKeyDown, true);
     return () => {
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [content, language, title, handleSave]);
+  }, [language, title, text.updateCount, submit]); // Remove content dependency, get it from editor
 
   const copyToken = async () => {
     if (text?.token) {
