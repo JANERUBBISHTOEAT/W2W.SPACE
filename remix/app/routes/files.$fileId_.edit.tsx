@@ -9,6 +9,7 @@ import { fileIconMap } from "~/utils/constants";
 import { deleteFile, getFile, updateFile } from "~/utils/data.server";
 import { useBlocker } from "react-router-dom";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
+import { FIELD_MAX_SIZE } from "~/utils/constants";
 
 export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   invariant(params.fileId, "Missing fileId param");
@@ -90,13 +91,33 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     return redirect("/?message=File+not+saved");
   }
 
+  // Check field sizes
+  const filename = formObj.fileName as string;
+  const notes = formObj.notes as string;
+
+  if (filename && new TextEncoder().encode(filename).length > FIELD_MAX_SIZE) {
+    return json({
+      error: `Filename exceeds the maximum limit of ${(
+        FIELD_MAX_SIZE / 1024
+      ).toFixed(1)}KB`,
+    });
+  }
+
+  if (notes && new TextEncoder().encode(notes).length > FIELD_MAX_SIZE) {
+    return json({
+      error: `Notes exceed the maximum limit of ${(
+        FIELD_MAX_SIZE / 1024
+      ).toFixed(1)}KB`,
+    });
+  }
+
   const updates = {
-    filename: formObj.fileName || file.filename || params.fileId || "",
+    filename: filename || file.filename || params.fileId || "",
     type: formObj.fileType || file.type || "",
     size: formObj.fileSize || file.size || -1,
     magnet: formObj.magnet || file.magnet || "",
     token: formObj.token || file.token || "",
-    notes: formObj.notes || file.notes || "",
+    notes: notes || file.notes || "",
   };
 
   console.log("Updates:", updates);
@@ -217,6 +238,7 @@ export default function EditFile() {
   const handleSubmit = (files: FileList | null) => {
     // [x]: Update element (should modify element || order)
     invariant(files, "No file selected");
+
     if (!clientRef.current || !files) {
       Swal.fire({
         icon: "error",

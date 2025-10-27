@@ -15,6 +15,7 @@ import type { TextRecord } from "~/utils/text.server";
 import { getText, updateText, deleteText } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import Swal from "sweetalert2";
+import { TEXT_MAX_SIZE, FIELD_MAX_SIZE } from "~/utils/constants";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
@@ -73,6 +74,31 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     const language = formData.get("language") as string;
     const title = formData.get("title") as string;
     const updateCount = formData.get("updateCount");
+
+    // Check content size
+    const contentSize = new TextEncoder().encode(content).length;
+    if (contentSize > TEXT_MAX_SIZE) {
+      return json({
+        success: false,
+        message: `Content size (${(contentSize / 1024 / 1024).toFixed(
+          2
+        )}MB) exceeds the maximum limit of ${(
+          TEXT_MAX_SIZE /
+          1024 /
+          1024
+        ).toFixed(0)}MB`,
+      });
+    }
+
+    // Check field sizes
+    if (title && new TextEncoder().encode(title).length > FIELD_MAX_SIZE) {
+      return json({
+        success: false,
+        message: `Title exceeds the maximum limit of ${(
+          FIELD_MAX_SIZE / 1024
+        ).toFixed(1)}KB`,
+      });
+    }
 
     const now = new Date().toISOString();
     await updateText(userId, params.textId, {

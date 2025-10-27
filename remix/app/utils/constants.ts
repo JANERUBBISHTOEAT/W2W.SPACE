@@ -69,3 +69,7 @@ export const fileIconMap: Record<string, string> = {
   // default
   default: "fas fa-file",
 };
+
+// Size limits
+export const TEXT_MAX_SIZE = 10 * 1024 * 1024; // 10MB for text content
+export const FIELD_MAX_SIZE = 1024; // 1KB for other fields (title, token, filename, notes, etc.)
