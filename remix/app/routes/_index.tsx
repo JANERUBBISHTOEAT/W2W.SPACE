@@ -195,9 +195,42 @@ export default function Index() {
     loadModule();
   }, []);
 
-  const debounce = (value: string, type: string) => {
-    if (debounceTimeout.current) {
-      clearTimeout(debounceTimeout.current);
+  // Old code: debounce function (commented out)
+  // const debounce = (value: string, type: string) => {
+  //   if (debounceTimeout.current) {
+  //     clearTimeout(debounceTimeout.current);
+  //   }
+
+  //   // Clear input CSS
+  //   const token_elem = document.getElementById(
+  //     "tokenInput"
+  //   ) as HTMLInputElement;
+  //   const magnet_elem = document.getElementById(
+  //     "magnetInput"
+  //   ) as HTMLInputElement;
+
+  //   if (type === "token") {
+  //     token_elem.className = "";
+  //   } else {
+  //     magnet_elem.className = "";
+  //   }
+  //   void token_elem.offsetWidth;
+
+  //   debounceTimeout.current = setTimeout(() => {
+  //     handleDownload(value, type);
+  //   }, 500);
+  // };
+
+  const handleKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    type: string
+  ) => {
+    if (e.key === "Enter") {
+      const target = e.target as HTMLInputElement;
+      const value = target.value.trim();
+      if (value) {
+        handleDownload(value, type);
+      }
     }
 
     // Clear input CSS
@@ -214,10 +247,6 @@ export default function Index() {
       magnet_elem.className = "";
     }
     void token_elem.offsetWidth;
-
-    debounceTimeout.current = setTimeout(() => {
-      handleDownload(value, type);
-    }, 500);
   };
 
   const handleDownload = async (magnet_or_token: string, type: string) => {
@@ -303,13 +332,13 @@ export default function Index() {
         return;
       }
 
-      // Check if it's a file token with magnet
-      if (fetcher.data?.type === "file" && fetcher.data?.magnet) {
+      // Check if it's a file token
+      if (fetcher.data?.type === "file") {
         token_elem.className = "";
         void token_elem.offsetWidth;
         token_elem.classList.add("correct-input");
-      } else if (!fetcher.data?.magnet) {
-        console.error("No magnet or text found");
+      } else {
+        console.error("Token not found");
         token_elem.className = "";
         void token_elem.offsetWidth;
         token_elem.classList.add("wrong-input");
@@ -475,25 +504,26 @@ export default function Index() {
           type="text"
           name="token"
           title="💡Try pasting onto page without clicking"
-          onChange={(e) => {
-            debounce(e.target.value, "token");
+          onKeyDown={(e) => {
+            handleKeyDown(e, "token");
           }}
           id="tokenInput"
         />
       </div>
 
-      <div className="">
+      {/* Old code: magnet link input (commented out) */}
+      {/* <div className="">
         <p>or using magnet link:</p>
         <input
           type="text"
           name="magnet"
           title="💡Same thing for magnets or even files :)"
-          onChange={(e) => {
-            debounce(e.target.value, "magnet");
+          onKeyDown={(e) => {
+            handleKeyDown(e, "magnet");
           }}
           id="magnetInput"
         />
-      </div>
+      </div> */}
 
       <div id="progress"></div>
       <div id="down_speed"></div>

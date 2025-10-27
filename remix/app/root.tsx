@@ -44,10 +44,14 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const visitor = await getVisitorSession(request);
     console.log("Visitor:", visitor);
     if (visitor) {
-      // has session, get files
+      // has session, get files and texts
       console.log("Existing visitor:", visitor.sub);
-      const files = await getFiles(visitor.sub, q);
-      return json({ files: files, q, loggedIn: false });
+      const { getTexts } = await import("~/utils/text.server");
+      const [files, texts] = await Promise.all([
+        getFiles(visitor.sub, q),
+        getTexts(visitor.sub, q),
+      ]);
+      return json({ files: files, texts: texts, q, loggedIn: false });
     } else {
       // no session, create with a random id session
       const session = await getSession(request);
@@ -55,14 +59,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.log("New visitor session:", rid);
       session.set("visitor", { sub: rid });
       return json(
-        { files: [], q, loggedIn: false },
+        { files: [], texts: [], q, loggedIn: false },
         { headers: { "Set-Cookie": await commitSession(session) } }
       );
     }
   }
   console.log("Logged in user:", user.sub);
-  const files = await getFiles(user.sub, q);
-  return json({ files: files, q, loggedIn: true });
+  const { getTexts } = await import("~/utils/text.server");
+  const [files, texts] = await Promise.all([
+    getFiles(user.sub, q),
+    getTexts(user.sub, q),
+  ]);
+  return json({ files: files, texts: texts, q, loggedIn: true });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -85,7 +93,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function App() {
-  const { files: files, q } = useLoaderData<typeof loader>();
+  const { files: files, texts: texts, q } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const submit = useSubmit();
   const [showNewOptions, setShowNewOptions] = useState(false);
@@ -99,6 +107,24 @@ export default function App() {
       searchField.value = q || "";
     }
   }, [q]);
+
+  // Close new options when navigation starts
+  useEffect(() => {
+    if (showNewOptions && navigation.state === "loading") {
+      setShowNewOptions(false);
+    }
+  }, [navigation.state, showNewOptions]);
+
+  // Add ESC key listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && showNewOptions) {
+        setShowNewOptions(false);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [showNewOptions]);
 
   return (
     <html lang="en">
@@ -153,7 +179,7 @@ export default function App() {
             </Form>
           </div>
           <nav>
-            {files.length ? (
+            {files.length > 0 || texts.length > 0 ? (
               <ul>
                 {files.map((file) => (
                   <li key={file.id}>
@@ -185,10 +211,33 @@ export default function App() {
                     </NavLink>
                   </li>
                 ))}
+                {texts.map((text) => (
+                  <li key={text.id}>
+                    {" "}
+                    <NavLink
+                      className={({ isActive, isPending }) =>
+                        isActive ? "active" : isPending ? "pending" : ""
+                      }
+                      to={`texts/${text.id}`}
+                    >
+                      {text.title || text.token ? (
+                        <>
+                          {text.title} #{text.token ? text.token : "------"}
+                        </>
+                      ) : (
+                        <i>No Name</i>
+                      )}{" "}
+                      <i
+                        className="fas fa-file-code"
+                        title="💡Text document"
+                      ></i>
+                    </NavLink>
+                  </li>
+                ))}
               </ul>
             ) : (
               <p>
-                <i>No files</i>
+                <i>No files or texts</i>
               </p>
             )}
           </nav>
@@ -207,8 +256,45 @@ export default function App() {
                 height: "100%",
                 gap: "2rem",
                 padding: "2rem",
+                position: "relative",
               }}
             >
+              {/* Close button hidden for now */}
+              {/* <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowNewOptions(false);
+                }}
+                style={{
+                  position: "absolute",
+                  top: "0.5rem",
+                  right: "0.5rem",
+                  padding: "0.4rem 0.8rem",
+                  fontSize: "1.5rem",
+                  cursor: "pointer",
+                  border: "none",
+                  borderRadius: "50%",
+                  backgroundColor: "rgba(0,0,0,0.1)",
+                  color: "#666",
+                  fontWeight: "bold",
+                  transition: "all 0.2s",
+                  zIndex: 10,
+                  width: "2rem",
+                  height: "2rem",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  lineHeight: "1",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.2)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.1)";
+                }}
+              >
+                ✕
+              </button> */}
               <div
                 onClick={() => {
                   setShowNewOptions(false);

@@ -125,7 +125,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       magnet: magnet,
       token: formObj.token,
       intent: "acquireMagnet",
-      type: magnet ? "file" : null,
+      type: fileId ? "file" : null,
     });
   }
 };
