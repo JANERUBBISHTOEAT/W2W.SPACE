@@ -1,67 +1,252 @@
-# WebToWeb
+![W2W.SPACE](https://socialify.git.ci/JANERUBBISHTOEAT/W2W.SPACE/image?font=Raleway&language=1&logo=https%3A%2F%2Fw2w.space%2Fsvg%2Fw2w_flat.svg&name=1&pattern=Diagonal+Stripes&theme=Auto)
 
-This repo is a browser-based BitTorrent client for fast file sharing.
-The client used [Remix](https://remix.run/) and [WebTorrent](https://github.com/webtorrent/webtorrent).
+# 🌐 WebToWeb (W2W)
 
-Access the web app at: <https://w2w.space/>
+> A browser-based P2P file sharing application built with Remix and WebTorrent
+
+![Dashboard](img/dashboard.png)
+
+**WebToWeb** is a secure, fast, and anonymous browser-based file sharing platform that enables direct peer-to-peer file transfers without requiring users to log in to any service or upload files to third-party servers.
+
+🔗 **Live Demo**: [w2w.space](https://w2w.space/)
 
 ---
 
-Originally a [CSCC09](https://thierrysans.me/CSCC09/) course project at the [UTSC](https://www.utsc.utoronto.ca/cms/), under the supervision of [Prof. Thierry Sans](https://thierrysans.me/).
+## ✨ Features
 
-## Why W2W
+- 🚀 **Fast P2P Transfer**: Direct peer-to-peer file sharing using WebTorrent protocol
+- 🔒 **Privacy-First**: No login required, no files stored on servers
+- 💾 **Large File Support**: No file size limitations
+- 🔑 **Token-Based Access**: Simple 6-digit token for secure file access
+- 🎨 **Modern UI**: Clean and intuitive user interface built with Remix
+- ⚡ **Real-Time Progress**: Live transfer progress with peer information
+- 🌍 **Browser-Based**: Works in all modern browsers (Chrome, Firefox, Safari, Edge)
 
-Case:
-> Transfer a file to a **public** computer (e.g., university lab, library, classroom, etc.) without logging in to any service.
+---
 
-**Why don't I use a social media platform?**
+## 🎯 Use Cases
 
-- **Privacy**: I don't want to log in to my social media account on a public computer.
+Perfect for transferring files to public computers:
 
-**Why don't I use a cloud storage service?**
+- **University Labs**: Share files without logging into cloud services
+- **Library Computers**: Transfer files securely without accounts
+- **Classroom Presentations**: Quick file sharing during presentations
+- **Temporary File Exchange**: One-time secure file transfers
 
-- **Privacy**: I don't want to log in to my cloud storage account on a public computer.
-- **Speed**: Some cloud storage services set limits on **file size** and **transfer speed**.
-- **Still Speed**: File first upload to the server, then download from the server. Take twice the time. P2P **utilizes the whole bandwidth** and doesn't have a file size limit.
+**Why WebToWeb over alternatives?**
 
-**OK, why don't I use a random online file transfer website?**
+✅ **No Login Required** - Keep your accounts safe  
+✅ **No File Storage** - Direct P2P transfer, no third-party servers  
+✅ **No Upload Wait** - Download starts immediately  
+✅ **No Size Limits** - Transfer files of any size  
+✅ **No Speed Limits** - Full bandwidth utilization  
+✅ **Short Tokens** - Simple 6-digit codes instead of long URLs
 
-- **Security**: I don't want to upload my file to a **random third-party server**. P2P network **does not store files**. You will also see number of peers during the transfer process, to ensure that your file is been transferred **only to the intended recipient**.
-- **Speed**: Most free online file transfer websites have a file **size limit** (e.g., 2GB), and a **transfer speed limit** (e.g., 1MB/s), because traditional storage services pay for both the storage and the bandwidth. P2P server **don't store or transfer files**, so no such limits.
-- **Still Speed**: Same as above.
-- **URL**: Yes, you upload your file to the random website and receive a **super long URL** (e.g., `https://*.com/downloads/626be05630b03e9fc71b23121581cf06`), what then? Type them in the destination computer, or use social media, Email... All of them require you to log in to a service. P2P **does not require any login**. You can just copy the **6-digit token** (e.g., `123456`) and type it in the destination computer. No need to log in to any service, no hassling with long URLs.
+---
 
-**Summary**
+## 📸 Screenshots
 
-Good stuff:
+<details>
+<summary>📊 Dashboard</summary>
 
-- No need to log in to any service: **keep account safe**
-- No need to install any software: **quick**
-- No passthrough via a third-party server: **keep file safe**
-- No need to type long URLs: **easy to use**
-- No waiting for upload before download: **fast**
-- No file size limit
-- No transfer speed limit
+Users can view all their files in a clean, organized dashboard with quick actions.
 
-Constraints:
+![Dashboard](img/dashboard.png)
 
-- **WebRTC**: Compatible with most modern browsers (Chrome, Firefox, Safari, Edge, Opera, etc.), but not all.
-- **P2P**: Only works when both computers are online. If one of them is offline, the transfer will be interrupted. You can use the **token** to resume the transfer later.
-- **Network**: Network is complex. If you are using a **restricted network** (e.g., university, company, some public networks, etc.), the network firewall may block P2P traffic. Some ISPs may also block P2P traffic.
-- **Security**: WebTorrent is a **public protocol**. Anyone can download the file with the magnet link. So consider using the token instead of the magnet link. The tracker server also gets to know the **metadata** of the file (e.g., file name, file size, etc.). However, normally this won't be a concern, since the scenario is to transfer files to a **public computer**, which is already public.
-- **Performance**: Again, network is complex. The performance of P2P transfer depends on the network condition and structure.
+</details>
 
-## TODO
+<details>
+<summary>🔄 Two-Way Sharing</summary>
 
-- [ ] Improve UI text to be more descriptive
-- [ ] Improve UI to prevent accidental page refresh/leave
-- [ ] Add JWT validation
-- [ ] Add expiration for tokens
-- [ ] Multi-device sync (i.e., the fetch is now triggered on routing event)
-- [ ] Resolve console complains
+File or text can be shared with a single click, providing seamless peer-to-peer transfer.
 
-## Features
+![New](img/new.png)
 
-- [x] File upload/download
-- [x] Token-based file access
-- [x] Google OAuth integration
+</details>
+
+<details>
+<summary>📄 File Sharing</summary>
+
+#### New File
+
+Create new files for sharing with built-in editor.
+
+![New File](img/file-new.png)
+
+#### Seed File
+
+Seed the file to the P2P network
+
+![Edit File](img/file-edit.png)
+
+..and get a token
+
+![Save File](img/file-seeded.png)
+
+#### Download File
+
+Get files by entering the token code.
+
+![Retrieve File](img/file-downloading.png)
+
+<!-- TODO: add download screenshot -->
+<!-- ..and downloaded -->
+
+</details>
+
+<details>
+<summary>📝 Text Sharing</summary>
+
+#### New Text
+
+Create and share text snippets instantly.
+
+![New Text](img/text-new.png)
+
+#### Edit Text
+
+Full-featured VS Code's editor ([Monaco Editor](https://github.com/microsoft/monaco-editor)) embedded in browser.
+
+![Edit Text](img/text-editor.png)
+
+#### Save Text
+
+Save text with real-time confirmation.
+
+![Save Text](img/text-save.png)
+
+#### Retrieve Text
+
+Retrieve text by entering the token code.
+
+![Retrieve Text](img/text-redir.png)
+
+</details>
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- Redis server
+- Docker (for containerized deployment)
+
+### Local Development
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/CSCC09-24F-Project.git
+cd CSCC09-24F-Project
+
+# Start Redis
+redis-server remix/app/redis.windows.conf
+
+# Install dependencies
+cd remix
+npm install
+
+# Start development server
+npm run dev
+```
+
+The application will be available at `http://localhost:3000`
+
+### Deployment
+
+Deploy using the automated script:
+
+```bash
+./deploy.sh
+```
+
+Or manually:
+
+```bash
+# Build and push Docker image
+cd remix
+docker buildx build --platform=linux/amd64 -t zheyuanwei/w2w:latest --push .
+
+# SSH to server and update
+ssh user@server
+cd ~/CSCC09-24F-Project/remix
+docker-compose pull
+docker-compose down
+docker-compose up -d
+```
+
+---
+
+## 🛠️ Tech Stack
+
+- **Framework**: [Remix](https://remix.run/) - Full-stack web framework
+- **P2P Engine**: [WebTorrent](https://github.com/webtorrent/webtorrent) - Peer-to-peer file sharing
+- **Editor**: Monaco Editor - VS Code's editor embedded in browser
+- **Database**: Redis - Fast, in-memory data store
+- **OAuth**: Google OAuth 2.0 - Secure authentication
+- **Styling**: CSS3 with custom design
+- **Icons**: Font Awesome
+
+---
+
+## 📁 Project Structure
+
+```
+CSCC09-24F-Project/
+├── remix/                    # Main application
+│   ├── app/
+│   │   ├── routes/          # Remix routes
+│   │   └── utils/           # Server utilities
+│   ├── public/              # Static assets
+│   └── dockerfile           # Container configuration
+├── deploy.sh                # Automated deployment script
+└── img/                     # Screenshots and assets
+```
+
+---
+
+## 📝 Available Scripts
+
+- `npm run dev` - Start development server
+- `npm run build` - Build for production
+- `npm run start` - Start production server
+- `./deploy.sh` - Automated deployment with timing
+
+---
+
+## ⚠️ Limitations
+
+- **WebRTC Required**: Works in modern browsers (Chrome, Firefox, Safari, Edge, Opera)
+- **Both Devices Online**: Requires both sender and receiver to be online simultaneously
+- **Network Restrictions**: May not work on heavily firewalled networks (corporate, university networks)
+- **Public Protocol**: Files are shared via public magnet links - use tokens for security
+- **No Offline Storage**: Files are not stored permanently on the server
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 🙏 Acknowledgments
+
+This project was developed as part of the **CSCC09** course project at the **University of Toronto Scarborough (UTSC)**, under the supervision of **Prof. Thierry Sans**.
+
+- Course: [CSCC09 - Web Development](https://thierrysans.me/CSCC09/)
+- Institution: [UTSC](https://www.utsc.utoronto.ca/cms/)
+- Professor: [Prof. Thierry Sans](https://thierrysans.me/)
+
+---
+
+<div align="center">
+Made with ❤️ by the CSCC09 Team
+</div>
