@@ -66,9 +66,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
+  const formData = await request.formData();
+  const type = formData.get("type") as string;
+  
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
-  const file = await createEmptyFile(user?.sub || visitor?.sub);
+  const sub = user?.sub || visitor?.sub;
+
+  if (type === "text") {
+    const { createEmptyText } = await import("~/utils/text.server");
+    const text = await createEmptyText(sub);
+    return redirect(`/texts/${text.id}`);
+  }
+
+  // Default to file
+  const file = await createEmptyFile(sub);
   return redirect(`/files/${file.id}/edit`);
 };
 
@@ -126,9 +138,28 @@ export default function App() {
               />
               <div id="search-spinner" hidden={!searching} aria-hidden />
             </Form>
-            <Form method="post">
-              <button type="submit">New</button>
-            </Form>
+            <div style={{ display: "flex", gap: "1rem" }}>
+              <Form method="post">
+                <button 
+                  type="submit" 
+                  name="type" 
+                  value="file"
+                  style={{ width: "100%", fontSize: "1.2rem", padding: "1rem" }}
+                >
+                  📁 New File
+                </button>
+              </Form>
+              <Form method="post">
+                <button 
+                  type="submit" 
+                  name="type" 
+                  value="text"
+                  style={{ width: "100%", fontSize: "1.2rem", padding: "1rem" }}
+                >
+                  ✏️ New Text
+                </button>
+              </Form>
+            </div>
           </div>
           <nav>
             {files.length ? (

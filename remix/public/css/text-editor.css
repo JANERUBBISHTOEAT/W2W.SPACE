@@ -53,3 +53,28 @@
   padding: 2rem;
   text-align: center;
 }
+
+.text-editor-title {
+  flex: 1;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.text-editor-language-select {
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.text-editor-token {
+  cursor: pointer;
+  color: #3992ff;
+}
+
+.text-editor-header-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+}

@@ -85,4 +85,25 @@ export default class HashMap {
     HashMap.set(token_str, magnet);
     return token_str;
   }
+
+  // Text-specific token methods
+  static async setText(
+    token: string,
+    textId: string
+  ): Promise<void | null> {
+    if (!redis) return null;
+    await redis.hset("textTokenMap", token, textId);
+  }
+
+  static async getText(token: string): Promise<string | null> {
+    if (!redis) return null;
+    return await redis.hget("textTokenMap", token);
+  }
+
+  static async generateTextToken(textId: string): Promise<string | null> {
+    if (!redis || !textId) return "";
+    const token_str = await HashMap.genKey(textId);
+    HashMap.setText(token_str, textId);
+    return token_str;
+  }
 }
