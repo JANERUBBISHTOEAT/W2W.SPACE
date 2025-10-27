@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# Automated Deployment Script
+# Automated Deployment Script for Remix Application
+# Deploys via Docker Hub to production server
 # Includes detailed timing to record total time and time spent on each step
 
 set -e  # Exit on error
@@ -79,7 +80,7 @@ print_header
 
 # Step 1: Build and push Docker image
 step_start "Building Docker image (amd64)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/remix"
 if docker buildx build --platform=linux/amd64 -t "$IMAGE_NAME" --push . > /tmp/deploy-build.log 2>&1; then
     step_end
 else
