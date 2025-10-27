@@ -18,7 +18,15 @@
   background: #f7f7f7;
   padding-left: 2rem;
   padding-right: 2rem;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
   min-height: 4.5rem;
+  line-height: 1;
+}
+
+#text-editor-header-left > p {
+  margin: 0;
+  padding: 0;
 }
 
 #text-editor-header-left {
@@ -79,7 +87,7 @@
 #text-editor-container label textarea {
   flex-grow: 1;
 }
-
+/* 
 #text-editor-container p button,
 #text-editor-container label button {
   z-index: 1;
@@ -94,4 +102,4 @@
   border: 1px solid #ccc;
   cursor: not-allowed;
   opacity: 0.7;
-}
+} */
