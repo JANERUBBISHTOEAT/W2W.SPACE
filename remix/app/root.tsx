@@ -10,6 +10,7 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useFetcher,
   useLoaderData,
   useNavigation,
   useSubmit,
@@ -104,6 +105,9 @@ export default function App() {
   const navigation = useNavigation();
   const submit = useSubmit();
   const [showNewOptions, setShowNewOptions] = useState(false);
+
+  // Use fetcher to revalidate data when files/texts are accessed
+  const fetcher = useFetcher();
   const searching =
     navigation.location &&
     new URLSearchParams(navigation.location.search).has("q");
@@ -189,14 +193,17 @@ export default function App() {
             {files.length > 0 || texts.length > 0 ? (
               <ul>
                 {files.map((file) => {
-                  const daysSinceAccess = file.lastAccessedAt
+                  // Use lastEditedAt if available, otherwise use lastAccessedAt
+                  const lastDate = file.lastEditedAt || file.lastAccessedAt;
+                  const daysSinceEdit = lastDate
                     ? Math.floor(
-                        (Date.now() - new Date(file.lastAccessedAt).getTime()) /
+                        (Date.now() - new Date(lastDate).getTime()) /
                           (1000 * 60 * 60 * 24)
                       )
                     : 0;
-                  const isExpiring =
-                    daysSinceAccess > 25 && daysSinceAccess < 30;
+                  const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
+                  const isExpired =
+                    daysSinceEdit >= 30 || file.status === "deleted";
 
                   return (
                     <li key={file.id}>
@@ -206,6 +213,9 @@ export default function App() {
                           isActive ? "active" : isPending ? "pending" : ""
                         }
                         to={`files/${file.id}/edit`}
+                        style={{
+                          textDecoration: isExpired ? "line-through" : "none",
+                        }}
                       >
                         {file.filename || file.token ? (
                           <>
@@ -216,6 +226,22 @@ export default function App() {
                           <i>No Name</i>
                         )}{" "}
                         {file.favorite ? <span>★</span> : null}
+                        {isExpiring && (
+                          <i
+                            className="fas fa-clock"
+                            style={{ color: "#ff6b6b", opacity: 0.6 }}
+                            title={`⚠️ Expiring soon (${
+                              30 - daysSinceEdit
+                            } days left)`}
+                          ></i>
+                        )}
+                        {isExpired && (
+                          <i
+                            className="fas fa-trash"
+                            style={{ color: "#ccc", opacity: 0.6 }}
+                            title="🗑️ Deleted (30+ days without access)"
+                          ></i>
+                        )}
                         <i
                           className={
                             "fas " + (file.owner ? "fa-upload" : "fa-download")
@@ -226,26 +252,22 @@ export default function App() {
                               : "💡You downloaded this file"
                           }
                         ></i>
-                        {isExpiring && (
-                          <i
-                            className="fas fa-clock"
-                            style={{ color: "#ff6b6b", opacity: 0.6 }}
-                            title="⚠️ Expiring soon"
-                          ></i>
-                        )}
                       </NavLink>
                     </li>
                   );
                 })}
                 {texts.map((text) => {
-                  const daysSinceAccess = text.lastAccessedAt
+                  // Use lastEditedAt if available, otherwise use lastAccessedAt
+                  const lastDate = text.lastEditedAt || text.lastAccessedAt;
+                  const daysSinceEdit = lastDate
                     ? Math.floor(
-                        (Date.now() - new Date(text.lastAccessedAt).getTime()) /
+                        (Date.now() - new Date(lastDate).getTime()) /
                           (1000 * 60 * 60 * 24)
                       )
                     : 0;
-                  const isExpiring =
-                    daysSinceAccess > 25 && daysSinceAccess < 30;
+                  const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
+                  const isExpired =
+                    daysSinceEdit >= 30 || text.status === "deleted";
 
                   return (
                     <li key={text.id}>
@@ -255,6 +277,9 @@ export default function App() {
                           isActive ? "active" : isPending ? "pending" : ""
                         }
                         to={`texts/${text.id}`}
+                        style={{
+                          textDecoration: isExpired ? "line-through" : "none",
+                        }}
                       >
                         {text.title || text.token ? (
                           <>
@@ -263,17 +288,26 @@ export default function App() {
                         ) : (
                           <i>No Name</i>
                         )}{" "}
-                        <i
-                          className="fas fa-file-code"
-                          title="💡Text document"
-                        ></i>
                         {isExpiring && (
                           <i
                             className="fas fa-clock"
                             style={{ color: "#ff6b6b", opacity: 0.6 }}
-                            title="⚠️ Expiring soon"
+                            title={`⚠️ Expiring soon (${
+                              30 - daysSinceEdit
+                            } days left)`}
                           ></i>
                         )}
+                        {isExpired && (
+                          <i
+                            className="fas fa-trash"
+                            style={{ color: "#ccc", opacity: 0.6 }}
+                            title="🗑️ Deleted (30+ days without access)"
+                          ></i>
+                        )}
+                        <i
+                          className="fas fa-file-code"
+                          title="💡Text document"
+                        ></i>
                       </NavLink>
                     </li>
                   );

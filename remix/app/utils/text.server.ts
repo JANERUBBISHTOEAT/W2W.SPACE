@@ -24,12 +24,14 @@ export type TextMutation = {
   lastAccessedAt?: string;
   accessCount?: number;
   updateCount?: number;
+  lastEditedAt?: string;
 };
 
 export type TextRecord = TextMutation & {
   id: string;
   createdAt: string;
   updatedAt: string;
+  status?: string;
 };
 
 const userTextsKey = (userId: string) => `user:${userId}:texts`;
@@ -45,7 +47,24 @@ const textService = {
           .then((text) => text as TextRecord)
       )
     );
-    return orderBy(texts.filter(Boolean), "updatedAt", "desc");
+
+    // Add status from unifiedTokenMap
+    const HashMap = (await import("./hashmap.server")).default;
+    for (const text of texts) {
+      if (text && text.token) {
+        const status = await HashMap.getBoth(text.token);
+        text.status = status.status || "OK";
+      }
+    }
+
+    // Sort by lastEditedAt if available, otherwise lastAccessedAt
+    const sortedTexts = texts.filter(Boolean).sort((a, b) => {
+      const dateA = a.lastEditedAt || a.lastAccessedAt || a.updatedAt;
+      const dateB = b.lastEditedAt || b.lastAccessedAt || b.updatedAt;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    });
+
+    return sortedTexts;
   },
 
   async get(userId: string, id: string): Promise<TextRecord | null> {
@@ -89,6 +108,7 @@ const textService = {
       lastAccessedAt: now,
       accessCount: 1,
       updateCount: 0,
+      lastEditedAt: now,
       token,
       title: token, // Default title is token
       ...values,
@@ -109,7 +129,10 @@ const textService = {
     const updatedText: TextRecord = {
       ...text,
       ...values,
-      updatedAt: new Date().toISOString(),
+      // Only update updatedAt if lastEditedAt is being updated
+      updatedAt: values.lastEditedAt
+        ? new Date().toISOString()
+        : text.updatedAt,
     };
     await redis.hset(userTextsKey(userId), id, JSON.stringify(updatedText));
     return updatedText;

@@ -30,13 +30,19 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     return redirect("/?message=Text+Not+Found");
   }
 
-  // Update access statistics
+  // Check if text is marked as deleted in unifiedTokenMap
+  if (text.status === "deleted") {
+    return redirect("/?message=Text+Has+Been+Deleted");
+  }
+
+  // Update access statistics (DO NOT update lastEditedAt on access)
   const { updateText } = await import("~/utils/text.server");
   const now = new Date().toISOString();
   const updatedText = {
     ...text,
     lastAccessedAt: now,
     accessCount: (text.accessCount || 0) + 1,
+    // Explicitly do NOT update lastEditedAt here
   };
   await updateText(userId, params.textId, updatedText);
 
@@ -63,11 +69,13 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     const title = formData.get("title") as string;
     const updateCount = formData.get("updateCount");
 
+    const now = new Date().toISOString();
     await updateText(userId, params.textId, {
       content,
       language,
       title,
       updateCount: updateCount ? parseInt(updateCount as string) : undefined,
+      lastEditedAt: now,
     });
 
     return json({

@@ -92,11 +92,11 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
   console.log("Updates:", updates);
 
-  const newFile = await updateFile(
-    user?.sub || visitor?.sub,
-    params.fileId,
-    updates as any
-  );
+  const now = new Date().toISOString();
+  const newFile = await updateFile(user?.sub || visitor?.sub, params.fileId, {
+    ...updates,
+    lastEditedAt: now,
+  } as any);
   // [x]: Update token element
   return redirect(`/files/${newFile.id}/?message=File+saved`);
 };

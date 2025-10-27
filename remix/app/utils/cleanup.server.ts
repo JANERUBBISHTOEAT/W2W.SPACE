@@ -8,7 +8,7 @@ const redis = new Redis({
 });
 
 export async function cleanupExpiredRecords() {
-  // Delete records that are 30 days old
+  // Delete records that are 30 days old (based on lastEditedAt)
   const thirtyDaysAgo = new Date(
     Date.now() - 30 * 24 * 60 * 60 * 1000
   ).toISOString();
@@ -24,10 +24,25 @@ export async function cleanupExpiredRecords() {
     const texts = await redis.hgetall(key);
     for (const [id, textJson] of Object.entries(texts)) {
       const text = JSON.parse(textJson as string);
-      if (text.lastAccessedAt && text.lastAccessedAt < thirtyDaysAgo) {
-        await redis.hdel(key, id);
+      // Use lastEditedAt if available, otherwise use lastAccessedAt
+      const lastDate = text.lastEditedAt || text.lastAccessedAt;
+      if (lastDate && lastDate < thirtyDaysAgo) {
+        // Mark as deleted in unifiedTokenMap instead of deleting the record
+        if (text.token) {
+          const HashMap = (await import("./hashmap.server")).default;
+          const tokenData = await redis.hget("unifiedTokenMap", text.token);
+          if (tokenData) {
+            const parsed = JSON.parse(tokenData);
+            parsed.status = "deleted";
+            await redis.hset(
+              "unifiedTokenMap",
+              text.token,
+              JSON.stringify(parsed)
+            );
+          }
+        }
         deletedCount++;
-        console.log(`Deleted expired text: ${id}`);
+        console.log(`Marked expired text as deleted: ${id}`);
       }
     }
   }
@@ -37,10 +52,25 @@ export async function cleanupExpiredRecords() {
     const files = await redis.hgetall(key);
     for (const [id, fileJson] of Object.entries(files)) {
       const file = JSON.parse(fileJson as string);
-      if (file.lastAccessedAt && file.lastAccessedAt < thirtyDaysAgo) {
-        await redis.hdel(key, id);
+      // Use lastEditedAt if available, otherwise use lastAccessedAt
+      const lastDate = file.lastEditedAt || file.lastAccessedAt;
+      if (lastDate && lastDate < thirtyDaysAgo) {
+        // Mark as deleted in unifiedTokenMap instead of deleting the record
+        if (file.token) {
+          const HashMap = (await import("./hashmap.server")).default;
+          const tokenData = await redis.hget("unifiedTokenMap", file.token);
+          if (tokenData) {
+            const parsed = JSON.parse(tokenData);
+            parsed.status = "deleted";
+            await redis.hset(
+              "unifiedTokenMap",
+              file.token,
+              JSON.stringify(parsed)
+            );
+          }
+        }
         deletedCount++;
-        console.log(`Deleted expired file: ${id}`);
+        console.log(`Marked expired file as deleted: ${id}`);
       }
     }
   }
@@ -59,11 +89,11 @@ export async function enforceTokenLimit() {
         `6-digit token detected: ${token}, need to clean up oldest record`
       );
 
-      // Find oldest record across all users
+      // Find oldest record across all users (based on lastEditedAt)
       let oldestRecord: {
         key: string;
         id: string;
-        lastAccessedAt: string;
+        lastDate: string;
       } | null = null;
 
       const userTextsKeys = await redis.keys("user:*:texts");
@@ -73,12 +103,10 @@ export async function enforceTokenLimit() {
         const records = await redis.hgetall(key);
         for (const [id, recordJson] of Object.entries(records)) {
           const record = JSON.parse(recordJson as string);
-          if (
-            record.lastAccessedAt &&
-            (!oldestRecord ||
-              record.lastAccessedAt < oldestRecord.lastAccessedAt)
-          ) {
-            oldestRecord = { key, id, lastAccessedAt: record.lastAccessedAt };
+          // Use lastEditedAt if available, otherwise use lastAccessedAt
+          const lastDate = record.lastEditedAt || record.lastAccessedAt;
+          if (lastDate && (!oldestRecord || lastDate < oldestRecord.lastDate)) {
+            oldestRecord = { key, id, lastDate };
           }
         }
       }

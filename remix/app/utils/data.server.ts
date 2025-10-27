@@ -27,11 +27,13 @@ type FileMutation = {
   lastAccessedAt?: string;
   accessCount?: number;
   updateCount?: number;
+  lastEditedAt?: string;
 };
 
 export type FileRecord = FileMutation & {
   id: string;
   createdAt: string;
+  status?: string;
 };
 
 const userFilesKey = (userId: string) => `user:${userId}:files`;
@@ -41,9 +43,32 @@ const fileService = {
   async getAll(userId: string): Promise<FileRecord[]> {
     const keys = await redis.hkeys(userFilesKey(userId));
     const files = await Promise.all(
-      keys.map((key) => redis.hget(userFilesKey(userId), key).then(JSON.parse))
+      keys
+        .map((key) =>
+          redis
+            .hget(userFilesKey(userId), key)
+            .then((data) => (data ? JSON.parse(data) : null))
+        )
+        .filter(Boolean)
     );
-    return orderBy(files, "createdAt", "desc");
+
+    // Add status from unifiedTokenMap
+    const HashMap = (await import("./hashmap.server")).default;
+    for (const file of files) {
+      if (file.token) {
+        const status = await HashMap.getBoth(file.token);
+        file.status = status.status || "OK";
+      }
+    }
+
+    // Sort by lastEditedAt if available, otherwise lastAccessedAt
+    const sortedFiles = files.sort((a, b) => {
+      const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
+      const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    });
+
+    return sortedFiles;
   },
 
   async get(userId: string, id: string): Promise<FileRecord | null> {
@@ -70,6 +95,7 @@ const fileService = {
       lastAccessedAt: createdAt,
       accessCount: 1,
       updateCount: 0,
+      lastEditedAt: createdAt,
       ...values,
     };
 
