@@ -59,7 +59,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         getFiles(visitor.sub, q),
         getTexts(visitor.sub, q),
       ]);
-      return json({ files: files, texts: texts, q, loggedIn: false });
+
+      // Merge and sort by lastEditedAt
+      const allItems = [...files, ...texts].sort((a, b) => {
+        const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
+        const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
+
+      return json({
+        files: files,
+        texts: texts,
+        allItems: allItems,
+        q,
+        loggedIn: false,
+      });
     } else {
       // no session, create with a random id session
       const session = await getSession(request);
@@ -67,7 +81,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.log("New visitor session:", rid);
       session.set("visitor", { sub: rid });
       return json(
-        { files: [], texts: [], q, loggedIn: false },
+        { files: [], texts: [], allItems: [], q, loggedIn: false },
         { headers: { "Set-Cookie": await commitSession(session) } }
       );
     }
@@ -78,7 +92,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getFiles(user.sub, q),
     getTexts(user.sub, q),
   ]);
-  return json({ files: files, texts: texts, q, loggedIn: true });
+
+  // Merge and sort by lastEditedAt
+  const allItems = [...files, ...texts].sort((a, b) => {
+    const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
+    const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
+    return new Date(dateB).getTime() - new Date(dateA).getTime();
+  });
+
+  return json({
+    files: files,
+    texts: texts,
+    allItems: allItems,
+    q,
+    loggedIn: true,
+  });
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -101,7 +129,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function App() {
-  const { files: files, texts: texts, q } = useLoaderData<typeof loader>();
+  const { allItems: allItems, q } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const submit = useSubmit();
   const [showNewOptions, setShowNewOptions] = useState(false);
@@ -190,127 +218,134 @@ export default function App() {
             </Form>
           </div>
           <nav>
-            {files.length > 0 || texts.length > 0 ? (
+            {allItems && allItems.length > 0 ? (
               <ul>
-                {files.map((file) => {
-                  // Use lastEditedAt if available, otherwise use lastAccessedAt
-                  const lastDate = file.lastEditedAt || file.lastAccessedAt;
-                  const daysSinceEdit = lastDate
-                    ? Math.floor(
-                        (Date.now() - new Date(lastDate).getTime()) /
-                          (1000 * 60 * 60 * 24)
-                      )
-                    : 0;
-                  const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                  const isExpired =
-                    daysSinceEdit >= 30 || file.status === "deleted";
+                {allItems.map((item: any) => {
+                  // Determine if it's a file or text
+                  const isFile = item.filename !== undefined;
+                  const file = isFile ? item : null;
+                  const text = !isFile ? item : null;
 
-                  return (
-                    <li key={file.id}>
-                      {" "}
-                      <NavLink
-                        className={({ isActive, isPending }) =>
-                          isActive ? "active" : isPending ? "pending" : ""
-                        }
-                        to={`files/${file.id}/edit`}
-                        style={{
-                          textDecoration: isExpired ? "line-through" : "none",
-                        }}
-                      >
-                        {file.filename || file.token ? (
-                          <>
-                            {file.filename} #
-                            {file.token ? file.token : "------"}
-                          </>
-                        ) : (
-                          <i>No Name</i>
-                        )}{" "}
-                        {file.favorite ? <span>★</span> : null}
-                        {isExpiring && (
-                          <i
-                            className="fas fa-clock"
-                            style={{ color: "#ff6b6b", opacity: 0.6 }}
-                            title={`⚠️ Expiring soon (${
-                              30 - daysSinceEdit
-                            } days left)`}
-                          ></i>
-                        )}
-                        {isExpired && (
-                          <i
-                            className="fas fa-trash"
-                            style={{ color: "#ccc", opacity: 0.6 }}
-                            title="🗑️ Deleted (30+ days without access)"
-                          ></i>
-                        )}
-                        <i
-                          className={
-                            "fas " + (file.owner ? "fa-upload" : "fa-download")
-                          }
-                          title={
-                            file.owner
-                              ? "💡You created this file"
-                              : "💡You downloaded this file"
-                          }
-                        ></i>
-                      </NavLink>
-                    </li>
-                  );
-                })}
-                {texts.map((text) => {
-                  // Use lastEditedAt if available, otherwise use lastAccessedAt
-                  const lastDate = text.lastEditedAt || text.lastAccessedAt;
-                  const daysSinceEdit = lastDate
-                    ? Math.floor(
-                        (Date.now() - new Date(lastDate).getTime()) /
-                          (1000 * 60 * 60 * 24)
-                      )
-                    : 0;
-                  const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                  const isExpired =
-                    daysSinceEdit >= 30 || text.status === "deleted";
+                  if (file) {
+                    // Use lastEditedAt if available, otherwise use lastAccessedAt
+                    const lastDate = file.lastEditedAt || file.lastAccessedAt;
+                    const daysSinceEdit = lastDate
+                      ? Math.floor(
+                          (Date.now() - new Date(lastDate).getTime()) /
+                            (1000 * 60 * 60 * 24)
+                        )
+                      : 0;
+                    const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
+                    const isExpired =
+                      daysSinceEdit >= 30 || file.status === "deleted";
 
-                  return (
-                    <li key={text.id}>
-                      {" "}
-                      <NavLink
-                        className={({ isActive, isPending }) =>
-                          isActive ? "active" : isPending ? "pending" : ""
-                        }
-                        to={`texts/${text.id}`}
-                        style={{
-                          textDecoration: isExpired ? "line-through" : "none",
-                        }}
-                      >
-                        {text.title || text.token ? (
-                          <>
-                            {text.title} #{text.token ? text.token : "------"}
-                          </>
-                        ) : (
-                          <i>No Name</i>
-                        )}{" "}
-                        {isExpiring && (
+                    return (
+                      <li key={file.id}>
+                        {" "}
+                        <NavLink
+                          className={({ isActive, isPending }) =>
+                            isActive ? "active" : isPending ? "pending" : ""
+                          }
+                          to={`files/${file.id}/edit`}
+                          style={{
+                            textDecoration: isExpired ? "line-through" : "none",
+                          }}
+                        >
+                          {file.filename || file.token ? (
+                            <>
+                              {file.filename} #
+                              {file.token ? file.token : "------"}
+                            </>
+                          ) : (
+                            <i>No Name</i>
+                          )}{" "}
+                          {file.favorite ? <span>★</span> : null}
+                          {isExpiring && (
+                            <i
+                              className="fas fa-clock"
+                              style={{ color: "#ff6b6b", opacity: 0.6 }}
+                              title={`⚠️ Expiring soon (${
+                                30 - daysSinceEdit
+                              } days left)`}
+                            ></i>
+                          )}
+                          {isExpired && (
+                            <i
+                              className="fas fa-trash"
+                              style={{ color: "#ccc", opacity: 0.6 }}
+                              title="🗑️ Deleted (30+ days without access)"
+                            ></i>
+                          )}
                           <i
-                            className="fas fa-clock"
-                            style={{ color: "#ff6b6b", opacity: 0.6 }}
-                            title={`⚠️ Expiring soon (${
-                              30 - daysSinceEdit
-                            } days left)`}
+                            className={
+                              "fas " +
+                              (file.owner ? "fa-upload" : "fa-download")
+                            }
+                            title={
+                              file.owner
+                                ? "💡You created this file"
+                                : "💡You downloaded this file"
+                            }
                           ></i>
-                        )}
-                        {isExpired && (
+                        </NavLink>
+                      </li>
+                    );
+                  } else {
+                    // Handle text
+                    const lastDate = text.lastEditedAt || text.lastAccessedAt;
+                    const daysSinceEdit = lastDate
+                      ? Math.floor(
+                          (Date.now() - new Date(lastDate).getTime()) /
+                            (1000 * 60 * 60 * 24)
+                        )
+                      : 0;
+                    const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
+                    const isExpired =
+                      daysSinceEdit >= 30 || text.status === "deleted";
+
+                    return (
+                      <li key={text.id}>
+                        {" "}
+                        <NavLink
+                          className={({ isActive, isPending }) =>
+                            isActive ? "active" : isPending ? "pending" : ""
+                          }
+                          to={`texts/${text.id}`}
+                          style={{
+                            textDecoration: isExpired ? "line-through" : "none",
+                          }}
+                        >
+                          {text.title || text.token ? (
+                            <>
+                              {text.title} #{text.token ? text.token : "------"}
+                            </>
+                          ) : (
+                            <i>No Name</i>
+                          )}{" "}
+                          {isExpiring && (
+                            <i
+                              className="fas fa-clock"
+                              style={{ color: "#ff6b6b", opacity: 0.6 }}
+                              title={`⚠️ Expiring soon (${
+                                30 - daysSinceEdit
+                              } days left)`}
+                            ></i>
+                          )}
+                          {isExpired && (
+                            <i
+                              className="fas fa-trash"
+                              style={{ color: "#ccc", opacity: 0.6 }}
+                              title="🗑️ Deleted (30+ days without access)"
+                            ></i>
+                          )}
                           <i
-                            className="fas fa-trash"
-                            style={{ color: "#ccc", opacity: 0.6 }}
-                            title="🗑️ Deleted (30+ days without access)"
+                            className="fas fa-file-code"
+                            title="💡Text document"
                           ></i>
-                        )}
-                        <i
-                          className="fas fa-file-code"
-                          title="💡Text document"
-                        ></i>
-                      </NavLink>
-                    </li>
-                  );
+                        </NavLink>
+                      </li>
+                    );
+                  }
                 })}
               </ul>
             ) : (
