@@ -77,9 +77,11 @@ export default function TextEditor() {
     text?.title || text?.token || "Untitled Text"
   );
 
-  // Update title when text changes (from server)
+  // Update content, title, and language when text changes (from server)
   useEffect(() => {
-    if (text?.title || text?.token) {
+    if (text) {
+      setContent(text.content || "# Welcome\n\nStart typing...");
+      setLanguage(text.language || "markdown");
       setTitle(text.title || text.token || "Untitled Text");
     }
   }, [text]);
