@@ -35,9 +35,14 @@ const textService = {
   async getAll(userId: string): Promise<TextRecord[]> {
     const keys = await redis.hkeys(userTextsKey(userId));
     const texts = await Promise.all(
-      keys.map((key) => redis.hget(userTextsKey(userId), key).then(JSON.parse))
+      keys.map((key) =>
+        redis
+          .hget(userTextsKey(userId), key)
+          .then((data) => (data ? JSON.parse(data) : null))
+          .then((text) => text as TextRecord)
+      )
     );
-    return orderBy(texts, "updatedAt", "desc");
+    return orderBy(texts.filter(Boolean), "updatedAt", "desc");
   },
 
   async get(userId: string, id: string): Promise<TextRecord | null> {
@@ -46,17 +51,19 @@ const textService = {
   },
 
   async getByToken(token: string): Promise<TextRecord | null> {
-    // Search across all users for this token
+    // Use unified token map
+    const HashMap = (await import("./hashmap.server")).default;
+    const textId = await HashMap.getText(token);
+    if (!textId) return null;
+
+    // Search across all users for this textId
     const userIds = await redis.keys("user:*:texts");
     for (const key of userIds) {
-      const keys = await redis.hkeys(key);
-      for (const textId of keys) {
-        const textData = await redis.hget(key, textId);
-        if (textData) {
-          const text: TextRecord = JSON.parse(textData);
-          if (text.token === token) {
-            return text;
-          }
+      const textData = await redis.hget(key, textId);
+      if (textData) {
+        const text: TextRecord = JSON.parse(textData);
+        if (text.token === token) {
+          return text;
         }
       }
     }

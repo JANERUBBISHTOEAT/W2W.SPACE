@@ -79,9 +79,25 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   if (formObj.intent === "acquireMagnet") {
     console.log("intent: acquireMagnet");
     const token = formObj.token as string;
+
+    // Check if it's a text token first
+    const textId = await HashMap.getText(token);
+    if (textId) {
+      return json({
+        intent: "acquireMagnet",
+        textId: textId,
+        magnet: null,
+        type: "text",
+      });
+    }
+
+    // Otherwise try file token
     const magnet = await HashMap.get(token);
-    console.log("Magnet:", magnet);
-    return json({ magnet: magnet });
+    return json({
+      intent: "acquireMagnet",
+      magnet: magnet,
+      type: magnet ? "file" : null,
+    });
   }
 };
 
@@ -94,14 +110,7 @@ export default function Index() {
   const [torrent, setTorrent] = useState<any | null>(null);
   const clientRef = useRef<any | null>(null);
   const client_id = googleClientId || "";
-  const fetcher = useFetcher<{
-    googleClientId: string;
-    user: Record<string, any>;
-    fileId?: string;
-    magnet?: string;
-    token?: string;
-    intent?: string;
-  }>();
+  const fetcher = useFetcher<any>();
   const [loggedIn, setLoggedIn] = useState(initialUser ? true : false);
   const [user, setUser] = useState<Record<string, any> | null>(null);
   const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -276,25 +285,32 @@ export default function Index() {
     ) as HTMLInputElement;
 
     // [x] Acquire magnet link & save to history
-    if (fetcher.data.intent === "acquireMagnet") {
-      if (!fetcher.data.magnet) {
-        console.error("No magnet link found");
+    if (fetcher.data?.intent === "acquireMagnet") {
+      // Check if it's a text token
+      if (fetcher.data?.type === "text" && fetcher.data?.textId) {
+        console.log("Redirecting to text:", fetcher.data.textId);
+        window.location.href = `/texts/${fetcher.data.textId}`;
+        return;
+      }
+
+      // Check if it's a file token with magnet
+      if (fetcher.data?.type === "file" && fetcher.data?.magnet) {
+        token_elem.className = "";
+        void token_elem.offsetWidth;
+        token_elem.classList.add("correct-input");
+      } else if (!fetcher.data?.magnet) {
+        console.error("No magnet or text found");
         token_elem.className = "";
         void token_elem.offsetWidth;
         token_elem.classList.add("wrong-input");
         return;
-      } else {
-        // Correct token
-        token_elem.className = "";
-        void token_elem.offsetWidth;
-        token_elem.classList.add("correct-input");
       }
     }
 
     // [x] Tested download by magnet link
-    else if (fetcher.data.intent === "acquireToken") {
+    else if (fetcher.data?.intent === "acquireToken") {
       console.log("Acquiring token...");
-      if (!fetcher.data.token) {
+      if (!fetcher.data?.token) {
         console.error("No token found");
         console.error("No token found");
         magnet_elem.className = "";

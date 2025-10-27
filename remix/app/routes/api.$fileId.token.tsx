@@ -67,9 +67,21 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       return json({ magnet: "" });
     }
 
-    // Retrieve magnet
-    const magnet = await HashMap.get(formObj.token as string);
-    console.log("Magnet:", magnet);
+    const token = formObj.token as string;
+
+    // Check if it's a text token first
+    const textId = await HashMap.getText(token);
+    if (textId) {
+      return json({
+        intent: "acquireMagnet",
+        textId: textId,
+        magnet: null,
+        type: "text",
+      });
+    }
+
+    // Otherwise try file token
+    const magnet = await HashMap.get(token);
 
     let newfile;
     if (params.fileId === "new" && magnet)
@@ -84,6 +96,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       magnet: magnet,
       token: formObj.token,
       intent: "acquireMagnet",
+      type: magnet ? "file" : null,
     });
   }
 };

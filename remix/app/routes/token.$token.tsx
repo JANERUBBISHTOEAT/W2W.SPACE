@@ -7,22 +7,19 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   invariant(params.token, "Missing token param");
   const token = params.token;
 
-  // Check both textTokenMap and tokenMap simultaneously
-  const [textId, magnet] = await Promise.all([
-    HashMap.getText(token),
-    HashMap.get(token),
-  ]);
+  // Check unified token map
+  const result = await HashMap.getBoth(token);
 
-  if (textId) {
-    // Token exists in textTokenMap, redirect to text
-    return redirect(`/texts/${textId}`);
+  if (result.type === "text" && result.textId) {
+    // Token exists as text, redirect to text
+    return redirect(`/texts/${result.textId}`);
   }
 
-  if (magnet) {
-    // Token exists in tokenMap, it's a file token
+  if (result.type === "file" && result.magnet) {
+    // Token exists as file, redirect to file via token
     return redirect(`/token/${token}`);
   }
 
-  // If not found in either map, redirect to home with error
+  // If not found, redirect to home with error
   return redirect(`/?message=Invalid+Token`);
 };
