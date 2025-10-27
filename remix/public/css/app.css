@@ -255,8 +255,7 @@ i {
 }
 
 #sidebar nav a.pending {
-  animation: progress 2s infinite ease-in-out;
-  animation-delay: 200ms;
+  /* Remove navigation animation */
 }
 
 @keyframes progress {
@@ -278,9 +277,7 @@ i {
 }
 
 #detail.loading {
-  opacity: 0.25;
-  transition: opacity 200ms;
-  transition-delay: 200ms;
+  /* Remove detail loading animation */
 }
 
 #contact {

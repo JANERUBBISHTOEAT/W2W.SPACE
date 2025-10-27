@@ -499,7 +499,7 @@ export default function Index() {
     <div id="index-page">
       <div className="">
         {/* [x]: Make a soft warning here not Swal */}
-        <p>Download using your token:</p>
+        <p>Receive using your token:</p>
         <input
           type="text"
           name="token"

@@ -10,12 +10,9 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
-  useFetcher,
   useLoaderData,
   useNavigation,
-  useSubmit,
 } from "@remix-run/react";
-import { useEffect, useState } from "react";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "toastr/build/toastr.min.css";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
@@ -109,7 +106,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
-export const action = async ({ request, params }: ActionFunctionArgs) => {
+export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const type = formData.get("type") as string;
 
@@ -131,39 +128,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 export default function App() {
   const { allItems: allItems, q } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
-  const submit = useSubmit();
-  const [showNewOptions, setShowNewOptions] = useState(false);
-
-  // Use fetcher to revalidate data when files/texts are accessed
-  const fetcher = useFetcher();
   const searching =
     navigation.location &&
     new URLSearchParams(navigation.location.search).has("q");
-
-  useEffect(() => {
-    const searchField = document.getElementById("q");
-    if (searchField instanceof HTMLInputElement) {
-      searchField.value = q || "";
-    }
-  }, [q]);
-
-  // Close new options when navigation starts
-  useEffect(() => {
-    if (showNewOptions && navigation.state === "loading") {
-      setShowNewOptions(false);
-    }
-  }, [navigation.state, showNewOptions]);
-
-  // Add ESC key listener
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && showNewOptions) {
-        setShowNewOptions(false);
-      }
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [showNewOptions]);
 
   return (
     <html lang="en">
@@ -180,7 +147,7 @@ export default function App() {
         {/* ! HTML embed: import no complain, but module not found anywhere (waited) */}
         <div id="sidebar">
           <Link to=".">
-            <h1>Receive Files</h1>
+            <h1>Home</h1>
           </Link>
           <div>
             <Form
@@ -204,15 +171,8 @@ export default function App() {
               />
               <div id="search-spinner" hidden={!searching} aria-hidden />
             </Form>
-            <Form method="post">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  setShowNewOptions(true);
-                }}
-                style={{ width: "100%" }}
-              >
+            <Form method="get" action="/new">
+              <button type="submit" style={{ width: "100%" }}>
                 New
               </button>
             </Form>
@@ -362,118 +322,7 @@ export default function App() {
           id="detail"
           style={{ position: "relative" }}
         >
-          {showNewOptions ? (
-            <div
-              style={{
-                display: "flex",
-                height: "100%",
-                gap: "2rem",
-                padding: "2rem",
-                position: "relative",
-              }}
-            >
-              {/* Close button hidden for now */}
-              {/* <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowNewOptions(false);
-                }}
-                style={{
-                  position: "absolute",
-                  top: "0.5rem",
-                  right: "0.5rem",
-                  padding: "0.4rem 0.8rem",
-                  fontSize: "1.5rem",
-                  cursor: "pointer",
-                  border: "none",
-                  borderRadius: "50%",
-                  backgroundColor: "rgba(0,0,0,0.1)",
-                  color: "#666",
-                  fontWeight: "bold",
-                  transition: "all 0.2s",
-                  zIndex: 10,
-                  width: "2rem",
-                  height: "2rem",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  lineHeight: "1",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.2)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.1)";
-                }}
-              >
-                ✕
-              </button> */}
-              <div
-                onClick={() => {
-                  setShowNewOptions(false);
-                  submit({ type: "file" }, { method: "post" });
-                }}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "4px solid #3992ff",
-                  borderRadius: "1rem",
-                  cursor: "pointer",
-                  padding: "2rem",
-                  fontSize: "2rem",
-                  fontWeight: "bold",
-                  transition: "all 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "#f0f7ff";
-                  e.currentTarget.style.transform = "scale(1.05)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>📁</div>
-                <div>New File</div>
-              </div>
-              <div
-                onClick={() => {
-                  setShowNewOptions(false);
-                  submit({ type: "text" }, { method: "post" });
-                }}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  border: "4px solid #3992ff",
-                  borderRadius: "1rem",
-                  cursor: "pointer",
-                  padding: "2rem",
-                  fontSize: "2rem",
-                  fontWeight: "bold",
-                  transition: "all 0.2s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = "#f0f7ff";
-                  e.currentTarget.style.transform = "scale(1.05)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = "transparent";
-                  e.currentTarget.style.transform = "scale(1)";
-                }}
-              >
-                <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>✏️</div>
-                <div>New Text</div>
-              </div>
-            </div>
-          ) : (
-            <Outlet />
-          )}
+          <Outlet />
         </div>
 
         <ScrollRestoration />
