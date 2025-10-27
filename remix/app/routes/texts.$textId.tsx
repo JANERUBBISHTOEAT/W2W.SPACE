@@ -12,8 +12,9 @@ import MonacoEditor from "@monaco-editor/react";
 import toastr from "toastr";
 import invariant from "tiny-invariant";
 import type { TextRecord } from "~/utils/text.server";
-import { getText, updateText } from "~/utils/text.server";
+import { getText, updateText, deleteText } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
+import Swal from "sweetalert2";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
@@ -88,6 +89,11 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "delete") {
+    await deleteText(userId, params.textId);
+    return redirect("/");
+  }
+
   return json({ success: false, message: "Unknown intent" });
 };
 
@@ -125,6 +131,21 @@ export default function TextEditor() {
     formData.append("updateCount", String((text.updateCount || 0) + 1));
     submit(formData, { method: "post" });
   }, [content, language, title, text.updateCount, submit]);
+
+  const handleDelete = useCallback(async () => {
+    const result = await Swal.fire({
+      title: "Are you sure?",
+      text: "Please confirm you want to delete this text.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Yes, delete it!",
+    });
+    if (result.isConfirmed) {
+      const formData = new FormData();
+      formData.append("intent", "delete");
+      submit(formData, { method: "post" });
+    }
+  }, [submit]);
 
   useEffect(() => {
     if (actionData?.success) {
@@ -234,6 +255,9 @@ export default function TextEditor() {
             {isSaving || navigation.state === "submitting"
               ? "Saving..."
               : "Save"}
+          </button>
+          <button onClick={handleDelete} style={{ color: "#f44250" }}>
+            Delete
           </button>
         </div>
       </div>
