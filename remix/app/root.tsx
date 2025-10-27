@@ -209,17 +209,8 @@ export default function App() {
                       >
                         {file.filename || file.token ? (
                           <>
-                            <span
-                              style={{
-                                textDecoration:
-                                  daysSinceAccess >= 30
-                                    ? "line-through"
-                                    : "none",
-                              }}
-                            >
-                              {file.filename}
-                            </span>{" "}
-                            #{file.token ? file.token : "------"}
+                            {file.filename} #
+                            {file.token ? file.token : "------"}
                           </>
                         ) : (
                           <i>No Name</i>
@@ -267,17 +258,7 @@ export default function App() {
                       >
                         {text.title || text.token ? (
                           <>
-                            <span
-                              style={{
-                                textDecoration:
-                                  daysSinceAccess >= 30
-                                    ? "line-through"
-                                    : "none",
-                              }}
-                            >
-                              {text.title}
-                            </span>{" "}
-                            #{text.token ? text.token : "------"}
+                            {text.title} #{text.token ? text.token : "------"}
                           </>
                         ) : (
                           <i>No Name</i>
