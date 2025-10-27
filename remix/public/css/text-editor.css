@@ -10,12 +10,15 @@
 }
 
 #text-editor-header {
-  padding: 1rem 2rem;
+  padding: 0;
   border-bottom: 1px solid #e3e3e3;
   display: flex;
   justify-content: space-between;
   align-items: center;
   background: #f7f7f7;
+  padding-left: 2rem;
+  padding-right: 2rem;
+  min-height: 4.5rem;
 }
 
 #text-editor-header-left {
