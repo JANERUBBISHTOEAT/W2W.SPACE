@@ -66,25 +66,30 @@ const textService = {
   async create(userId: string, values: TextMutation): Promise<TextRecord> {
     const id = values.id || Math.random().toString(36).substring(2, 9);
     const now = new Date().toISOString();
+
+    // Generate token first
+    const HashMap = (await import("./hashmap.server")).default;
+    const token = (await HashMap.generateTextToken(id)) || "";
+
     const newText: TextRecord = {
       id,
       type: "text",
       createdAt: now,
       updatedAt: now,
+      token,
+      title: token, // Default title is token
       ...values,
     };
-
-    // Generate token if not provided
-    if (!newText.token) {
-      const HashMap = (await import("./hashmap.server")).default;
-      newText.token = (await HashMap.generateTextToken(newText.id)) || "";
-    }
 
     await redis.hset(userTextsKey(userId), id, JSON.stringify(newText));
     return newText;
   },
 
-  async set(userId: string, id: string, values: TextMutation): Promise<TextRecord> {
+  async set(
+    userId: string,
+    id: string,
+    values: TextMutation
+  ): Promise<TextRecord> {
     const text = await textService.get(userId, id);
     invariant(text, `No text found for ${id}`);
 
@@ -167,4 +172,3 @@ export async function mergeTexts(
   await redis.del(userTextsKey(visitorId));
   return textService.getAll(userId);
 }
-

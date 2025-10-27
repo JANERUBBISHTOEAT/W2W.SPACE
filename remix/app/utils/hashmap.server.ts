@@ -87,10 +87,7 @@ export default class HashMap {
   }
 
   // Text-specific token methods
-  static async setText(
-    token: string,
-    textId: string
-  ): Promise<void | null> {
+  static async setText(token: string, textId: string): Promise<void | null> {
     if (!redis) return null;
     await redis.hset("textTokenMap", token, textId);
   }
@@ -98,6 +95,21 @@ export default class HashMap {
   static async getText(token: string): Promise<string | null> {
     if (!redis) return null;
     return await redis.hget("textTokenMap", token);
+  }
+
+  // Get both token mappings simultaneously
+  static async getBoth(
+    token: string
+  ): Promise<{ textId: string | null; magnet: string | null }> {
+    if (!redis) return { textId: null, magnet: null };
+    const [textId, magnet] = await Promise.all([
+      redis.hget("textTokenMap", token),
+      redis.hget("tokenMap", token),
+    ]);
+    return {
+      textId: textId || null,
+      magnet: magnet || null,
+    };
   }
 
   static async generateTextToken(textId: string): Promise<string | null> {

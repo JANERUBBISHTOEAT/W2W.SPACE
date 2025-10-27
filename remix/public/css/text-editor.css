@@ -1,11 +1,16 @@
+/* 重写 #detail 的 padding */
+#detail:has(#text-editor-container) {
+  padding: 0;
+}
+
 #text-editor-container {
-  height: 100vh;
   display: flex;
   flex-direction: column;
+  height: 100%;
 }
 
 #text-editor-header {
-  padding: 1rem;
+  padding: 1rem 2rem;
   border-bottom: 1px solid #e3e3e3;
   display: flex;
   justify-content: space-between;
@@ -13,26 +18,31 @@
   background: #f7f7f7;
 }
 
-#text-editor-header h2 {
-  margin: 0;
+#text-editor-header-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
 }
 
-#text-editor-header button {
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-  background: #3992ff;
-  color: white;
-  border: none;
-  border-radius: 8px;
+#text-editor-header-right {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 
-#text-editor-header button:hover {
-  background: #2a7ae9;
+/* 为输入框之间添加间距 */
+#text-editor-container p input + input {
+  margin-left: 0.5rem;
 }
 
-#text-editor-header button:disabled {
-  background: #ccc;
-  cursor: not-allowed;
+/* 为顶部栏的各个元素之间添加等距间距 */
+#text-editor-header-left > p {
+  gap: 0.5rem;
+}
+
+#text-editor-header-right > select,
+#text-editor-header-right > button {
+  margin-left: 0.5rem;
 }
 
 #text-editor-wrapper {
@@ -49,32 +59,36 @@
   color: #666;
 }
 
-.editor-loading {
-  padding: 2rem;
-  text-align: center;
-}
-
-.text-editor-title {
-  flex: 1;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-.text-editor-language-select {
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-.text-editor-token {
-  cursor: pointer;
-  color: #3992ff;
-}
-
-.text-editor-header-row {
+/* 使用与 #contact-form 相同的样式 */
+#text-editor-container p,
+#text-editor-container label {
   display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex: 1;
+  gap: 0.5rem;
+}
+
+#text-editor-container p span,
+#text-editor-container label span {
+  width: 8rem;
+}
+
+#text-editor-container p input,
+#text-editor-container label input,
+#text-editor-container label textarea {
+  flex-grow: 1;
+}
+
+#text-editor-container p button,
+#text-editor-container label button {
+  z-index: 1;
+  margin-left: -2rem;
+  cursor: pointer;
+  border: 1px solid #ccc;
+}
+
+#text-editor-container input[disabled] {
+  background-color: #f0f0f0;
+  color: #a0a0a0;
+  border: 1px solid #ccc;
+  cursor: not-allowed;
+  opacity: 0.7;
 }

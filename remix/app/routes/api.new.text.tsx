@@ -10,4 +10,3 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return redirect(`/texts/${newText.id}`);
 };
-

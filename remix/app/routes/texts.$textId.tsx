@@ -1,7 +1,12 @@
 import type { LinksFunction } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { useActionData, useLoaderData, useNavigation, useSubmit } from "@remix-run/react";
+import {
+  useActionData,
+  useLoaderData,
+  useNavigation,
+  useSubmit,
+} from "@remix-run/react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import toastr from "toastr";
@@ -11,6 +16,7 @@ import { getText, updateText } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 
 export const links: LinksFunction = () => [
+  { rel: "stylesheet", href: "/css/app.css" },
   { rel: "stylesheet", href: "/css/text-editor.css" },
 ];
 
@@ -34,7 +40,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   invariant(params.textId, "Missing textId param");
   const formData = await request.formData();
   const intent = formData.get("intent") as string;
-  
+
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
   const userId = user?.sub || visitor?.sub;
@@ -63,9 +69,20 @@ export default function TextEditor() {
   const submit = useSubmit();
   const navigation = useNavigation();
   const { text } = useLoaderData<typeof loader>();
-  const [content, setContent] = useState(text?.content || "# Welcome\n\nStart typing...");
+  const [content, setContent] = useState(
+    text?.content || "# Welcome\n\nStart typing..."
+  );
   const [language, setLanguage] = useState(text?.language || "markdown");
-  const [title, setTitle] = useState(text?.title || "Untitled Text");
+  const [title, setTitle] = useState(
+    text?.title || text?.token || "Untitled Text"
+  );
+
+  // Update title when text changes (from server)
+  useEffect(() => {
+    if (text?.title || text?.token) {
+      setTitle(text.title || text.token || "Untitled Text");
+    }
+  }, [text]);
   const [isSaving, setIsSaving] = useState(false);
   const actionData = useActionData<ActionData>();
   const editorRef = useRef<unknown>(null);
@@ -142,18 +159,36 @@ export default function TextEditor() {
   return (
     <div id="text-editor-container">
       <div id="text-editor-header">
-        <div className="text-editor-header-row">
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="text-editor-title"
-            placeholder="Title..."
-          />
+        <div id="text-editor-header-left">
+          <i
+            className="fas fa-file-code fa-2x"
+            style={{ color: "#818181" }}
+          ></i>
+          <p>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Untitled Text"
+            />
+            <input
+              aria-label="Token"
+              name="token"
+              value={text?.token || ""}
+              placeholder="Token"
+              type="text"
+              disabled
+              readOnly
+            />
+            <button id="copy-token" type="button" onClick={copyToken}>
+              Copy
+            </button>
+          </p>
+        </div>
+        <div id="text-editor-header-right">
           <select
             value={language}
             onChange={(e) => setLanguage(e.target.value)}
-            className="text-editor-language-select"
             title="Select programming language"
             aria-label="Select programming language"
           >
@@ -163,18 +198,15 @@ export default function TextEditor() {
               </option>
             ))}
           </select>
-          <span onClick={copyToken} className="text-editor-token" title={text?.token || ""}>
-            Token: {text?.token}
-          </span>
+          <button
+            onClick={handleSave}
+            disabled={isSaving || navigation.state === "submitting"}
+          >
+            {isSaving || navigation.state === "submitting"
+              ? "Saving..."
+              : "Save"}
+          </button>
         </div>
-        <button
-          onClick={handleSave}
-          disabled={isSaving || navigation.state === "submitting"}
-        >
-          {isSaving || navigation.state === "submitting"
-            ? "Saving..."
-            : "Save (Ctrl+S)"}
-        </button>
       </div>
 
       <div id="text-editor-wrapper">
@@ -213,4 +245,3 @@ export default function TextEditor() {
     </div>
   );
 }
-

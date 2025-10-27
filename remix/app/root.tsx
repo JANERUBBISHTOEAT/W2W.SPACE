@@ -14,7 +14,7 @@ import {
   useNavigation,
   useSubmit,
 } from "@remix-run/react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import "sweetalert2/dist/sweetalert2.min.css";
 import "toastr/build/toastr.min.css";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
@@ -68,7 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request, params }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const type = formData.get("type") as string;
-  
+
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
   const sub = user?.sub || visitor?.sub;
@@ -88,6 +88,7 @@ export default function App() {
   const { files: files, q } = useLoaderData<typeof loader>();
   const navigation = useNavigation();
   const submit = useSubmit();
+  const [showNewOptions, setShowNewOptions] = useState(false);
   const searching =
     navigation.location &&
     new URLSearchParams(navigation.location.search).has("q");
@@ -138,28 +139,18 @@ export default function App() {
               />
               <div id="search-spinner" hidden={!searching} aria-hidden />
             </Form>
-            <div style={{ display: "flex", gap: "1rem" }}>
-              <Form method="post">
-                <button 
-                  type="submit" 
-                  name="type" 
-                  value="file"
-                  style={{ width: "100%", fontSize: "1.2rem", padding: "1rem" }}
-                >
-                  📁 New File
-                </button>
-              </Form>
-              <Form method="post">
-                <button 
-                  type="submit" 
-                  name="type" 
-                  value="text"
-                  style={{ width: "100%", fontSize: "1.2rem", padding: "1rem" }}
-                >
-                  ✏️ New Text
-                </button>
-              </Form>
-            </div>
+            <Form method="post">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setShowNewOptions(true);
+                }}
+                style={{ width: "100%" }}
+              >
+                New
+              </button>
+            </Form>
           </div>
           <nav>
             {files.length ? (
@@ -207,8 +198,83 @@ export default function App() {
             navigation.state === "loading" && !searching ? "loading" : ""
           }
           id="detail"
+          style={{ position: "relative" }}
         >
-          <Outlet />
+          {showNewOptions ? (
+            <div
+              style={{
+                display: "flex",
+                height: "100%",
+                gap: "2rem",
+                padding: "2rem",
+              }}
+            >
+              <div
+                onClick={() => {
+                  setShowNewOptions(false);
+                  submit({ type: "file" }, { method: "post" });
+                }}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "4px solid #3992ff",
+                  borderRadius: "1rem",
+                  cursor: "pointer",
+                  padding: "2rem",
+                  fontSize: "2rem",
+                  fontWeight: "bold",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f0f7ff";
+                  e.currentTarget.style.transform = "scale(1.05)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>📁</div>
+                <div>New File</div>
+              </div>
+              <div
+                onClick={() => {
+                  setShowNewOptions(false);
+                  submit({ type: "text" }, { method: "post" });
+                }}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  border: "4px solid #3992ff",
+                  borderRadius: "1rem",
+                  cursor: "pointer",
+                  padding: "2rem",
+                  fontSize: "2rem",
+                  fontWeight: "bold",
+                  transition: "all 0.2s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "#f0f7ff";
+                  e.currentTarget.style.transform = "scale(1.05)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.transform = "scale(1)";
+                }}
+              >
+                <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>✏️</div>
+                <div>New Text</div>
+              </div>
+            </div>
+          ) : (
+            <Outlet />
+          )}
         </div>
 
         <ScrollRestoration />
