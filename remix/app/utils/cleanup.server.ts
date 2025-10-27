@@ -27,7 +27,7 @@ export async function cleanupExpiredRecords() {
       // Use lastEditedAt if available, otherwise use lastAccessedAt
       const lastDate = text.lastEditedAt || text.lastAccessedAt;
       if (lastDate && lastDate < thirtyDaysAgo) {
-        // Mark as deleted in unifiedTokenMap instead of deleting the record
+        // Mark as deleted in unifiedTokenMap
         if (text.token) {
           const HashMap = (await import("./hashmap.server")).default;
           const tokenData = await redis.hget("unifiedTokenMap", text.token);
@@ -41,8 +41,10 @@ export async function cleanupExpiredRecords() {
             );
           }
         }
+        // Delete from user's texts to save memory
+        await redis.hdel(key, id);
         deletedCount++;
-        console.log(`Marked expired text as deleted: ${id}`);
+        console.log(`Deleted expired text: ${id}`);
       }
     }
   }
@@ -55,7 +57,7 @@ export async function cleanupExpiredRecords() {
       // Use lastEditedAt if available, otherwise use lastAccessedAt
       const lastDate = file.lastEditedAt || file.lastAccessedAt;
       if (lastDate && lastDate < thirtyDaysAgo) {
-        // Mark as deleted in unifiedTokenMap instead of deleting the record
+        // Mark as deleted in unifiedTokenMap
         if (file.token) {
           const HashMap = (await import("./hashmap.server")).default;
           const tokenData = await redis.hget("unifiedTokenMap", file.token);
@@ -69,8 +71,10 @@ export async function cleanupExpiredRecords() {
             );
           }
         }
+        // Delete from user's files to save memory
+        await redis.hdel(key, id);
         deletedCount++;
-        console.log(`Marked expired file as deleted: ${id}`);
+        console.log(`Deleted expired file: ${id}`);
       }
     }
   }

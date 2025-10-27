@@ -31,8 +31,12 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   }
 
   // Check if text is marked as deleted in unifiedTokenMap
-  if (text.status === "deleted") {
-    return redirect("/?message=Text+Has+Been+Deleted");
+  if (text.token) {
+    const HashMap = (await import("~/utils/hashmap.server")).default;
+    const tokenStatus = await HashMap.getBoth(text.token);
+    if (tokenStatus.status === "deleted") {
+      return redirect("/?message=Text+Has+Been+Deleted");
+    }
   }
 
   // Update access statistics (DO NOT update lastEditedAt on access)

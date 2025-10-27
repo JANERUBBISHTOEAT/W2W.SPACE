@@ -21,6 +21,15 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     return redirect("/?message=Page+Not+Found");
   }
 
+  // Check if file is marked as deleted in unifiedTokenMap
+  if (file.token) {
+    const HashMap = (await import("~/utils/hashmap.server")).default;
+    const tokenStatus = await HashMap.getBoth(file.token);
+    if (tokenStatus.status === "deleted") {
+      return redirect("/?message=File+Has+Been+Deleted");
+    }
+  }
+
   // Update access statistics
   const now = new Date().toISOString();
   const updatedFile = {
