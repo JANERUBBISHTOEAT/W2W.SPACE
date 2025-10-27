@@ -35,13 +35,17 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   const visitor = await getVisitorSession(request);
   const userId = user?.sub || visitor?.sub;
 
-  // Try to get text by userId first, if that fails, search globally by textId
-  let text = null;
+  // Get text from user's collection first to determine ownership
+  let userText = null;
+  let isOwner = false;
+
   if (userId) {
-    text = await getText(userId, params.textId);
+    userText = await getText(userId, params.textId);
+    isOwner = !!userText;
   }
 
-  // If not found by userId, search globally by textId
+  // Get the text content (from user collection or search globally)
+  let text = userText;
   if (!text) {
     text = await getTextByTextId(params.textId);
   }
@@ -66,6 +70,8 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     lastAccessedAt: now,
     accessCount: (text.accessCount || 0) + 1,
     // Explicitly do NOT update lastEditedAt here
+    // Set owner based on current user's ownership
+    owner: isOwner,
   };
 
   // Update access statistics using the appropriate method
@@ -158,6 +164,26 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   }
 
   if (intent === "delete") {
+    // Check if user is owner before allowing delete
+    // Get the text to check owner status
+    let text = null;
+    if (userId) {
+      text = await getText(userId, params.textId);
+    }
+    if (!text) {
+      text = await getTextByTextId(params.textId);
+    }
+
+    // Only allow delete if user is the owner
+    // If owner field exists and is false, deny delete
+    if (text && "owner" in text && text.owner === false) {
+      return json({
+        success: false,
+        message: "Only the owner can delete this text",
+      });
+    }
+
+    // Proceed with delete if user is owner or if no owner check needed
     if (userId) {
       await deleteText(userId, params.textId);
     } else {
@@ -328,7 +354,15 @@ export default function TextEditor() {
               ? "Saving..."
               : "Save"}
           </button>
-          <button onClick={handleDelete} style={{ color: "#f44250" }}>
+          <button
+            onClick={handleDelete}
+            disabled={text?.owner === false}
+            style={{
+              color: text?.owner === false ? "#ccc" : "#f44250",
+              cursor: text?.owner === false ? "not-allowed" : "pointer",
+              opacity: text?.owner === false ? 0.5 : 1,
+            }}
+          >
             Delete
           </button>
         </div>
