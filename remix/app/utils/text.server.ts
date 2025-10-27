@@ -21,6 +21,9 @@ export type TextMutation = {
   favorite?: boolean;
   owner?: boolean;
   type?: TextType;
+  lastAccessedAt?: string;
+  accessCount?: number;
+  updateCount?: number;
 };
 
 export type TextRecord = TextMutation & {
@@ -83,6 +86,9 @@ const textService = {
       type: "text",
       createdAt: now,
       updatedAt: now,
+      lastAccessedAt: now,
+      accessCount: 1,
+      updateCount: 0,
       token,
       title: token, // Default title is token
       ...values,
@@ -110,6 +116,19 @@ const textService = {
   },
 
   async destroy(userId: string, id: string): Promise<null> {
+    // Get text to get token
+    const text = await this.get(userId, id);
+    if (text && text.token) {
+      // Update token status to "deleted" instead of deleting
+      const HashMap = (await import("./hashmap.server")).default;
+      const data = await redis.hget("unifiedTokenMap", text.token);
+      if (data) {
+        const parsed = JSON.parse(data);
+        parsed.status = "deleted";
+        await redis.hset("unifiedTokenMap", text.token, JSON.stringify(parsed));
+      }
+    }
+    // Delete from user texts
     await redis.hdel(userTextsKey(userId), id);
     return null;
   },

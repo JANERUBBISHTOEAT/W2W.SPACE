@@ -37,6 +37,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
   const q = url.searchParams.get("q");
   const user = await getUserSession(request);
+
+  // Check and cleanup expired records
+  const { cleanupExpiredRecords, enforceTokenLimit } = await import(
+    "~/utils/cleanup.server"
+  );
+  await Promise.all([cleanupExpiredRecords(), enforceTokenLimit()]);
+
   if (!user) {
     // visitor, check if has session
     const session = await getSession(request);
@@ -181,59 +188,115 @@ export default function App() {
           <nav>
             {files.length > 0 || texts.length > 0 ? (
               <ul>
-                {files.map((file) => (
-                  <li key={file.id}>
-                    {" "}
-                    <NavLink
-                      className={({ isActive, isPending }) =>
-                        isActive ? "active" : isPending ? "pending" : ""
-                      }
-                      to={`files/${file.id}`}
-                    >
-                      {file.filename || file.token ? (
-                        <>
-                          {file.filename} #{file.token ? file.token : "------"}
-                        </>
-                      ) : (
-                        <i>No Name</i>
-                      )}{" "}
-                      {file.favorite ? <span>★</span> : null}
-                      <i
-                        className={
-                          "fas " + (file.owner ? "fa-upload" : "fa-download")
+                {files.map((file) => {
+                  const daysSinceAccess = file.lastAccessedAt
+                    ? Math.floor(
+                        (Date.now() - new Date(file.lastAccessedAt).getTime()) /
+                          (1000 * 60 * 60 * 24)
+                      )
+                    : 0;
+                  const isExpiring =
+                    daysSinceAccess > 25 && daysSinceAccess < 30;
+
+                  return (
+                    <li key={file.id}>
+                      {" "}
+                      <NavLink
+                        className={({ isActive, isPending }) =>
+                          isActive ? "active" : isPending ? "pending" : ""
                         }
-                        title={
-                          file.owner
-                            ? "💡You created this file"
-                            : "💡You downloaded this file"
+                        to={`files/${file.id}/edit`}
+                      >
+                        {file.filename || file.token ? (
+                          <>
+                            <span
+                              style={{
+                                textDecoration:
+                                  daysSinceAccess >= 30
+                                    ? "line-through"
+                                    : "none",
+                              }}
+                            >
+                              {file.filename}
+                            </span>{" "}
+                            #{file.token ? file.token : "------"}
+                          </>
+                        ) : (
+                          <i>No Name</i>
+                        )}{" "}
+                        {file.favorite ? <span>★</span> : null}
+                        <i
+                          className={
+                            "fas " + (file.owner ? "fa-upload" : "fa-download")
+                          }
+                          title={
+                            file.owner
+                              ? "💡You created this file"
+                              : "💡You downloaded this file"
+                          }
+                        ></i>
+                        {isExpiring && (
+                          <i
+                            className="fas fa-clock"
+                            style={{ color: "#ff6b6b", opacity: 0.6 }}
+                            title="⚠️ Expiring soon"
+                          ></i>
+                        )}
+                      </NavLink>
+                    </li>
+                  );
+                })}
+                {texts.map((text) => {
+                  const daysSinceAccess = text.lastAccessedAt
+                    ? Math.floor(
+                        (Date.now() - new Date(text.lastAccessedAt).getTime()) /
+                          (1000 * 60 * 60 * 24)
+                      )
+                    : 0;
+                  const isExpiring =
+                    daysSinceAccess > 25 && daysSinceAccess < 30;
+
+                  return (
+                    <li key={text.id}>
+                      {" "}
+                      <NavLink
+                        className={({ isActive, isPending }) =>
+                          isActive ? "active" : isPending ? "pending" : ""
                         }
-                      ></i>
-                    </NavLink>
-                  </li>
-                ))}
-                {texts.map((text) => (
-                  <li key={text.id}>
-                    {" "}
-                    <NavLink
-                      className={({ isActive, isPending }) =>
-                        isActive ? "active" : isPending ? "pending" : ""
-                      }
-                      to={`texts/${text.id}`}
-                    >
-                      {text.title || text.token ? (
-                        <>
-                          {text.title} #{text.token ? text.token : "------"}
-                        </>
-                      ) : (
-                        <i>No Name</i>
-                      )}{" "}
-                      <i
-                        className="fas fa-file-code"
-                        title="💡Text document"
-                      ></i>
-                    </NavLink>
-                  </li>
-                ))}
+                        to={`texts/${text.id}`}
+                      >
+                        {text.title || text.token ? (
+                          <>
+                            <span
+                              style={{
+                                textDecoration:
+                                  daysSinceAccess >= 30
+                                    ? "line-through"
+                                    : "none",
+                              }}
+                            >
+                              {text.title}
+                            </span>{" "}
+                            #{text.token ? text.token : "------"}
+                          </>
+                        ) : (
+                          <i>No Name</i>
+                        )}{" "}
+                        <i
+                          className="fas fa-file-code"
+                          title="💡Text document"
+                        ></i>
+                        {isExpiring && (
+                          <i
+                            className="fas fa-clock"
+                            style={{ color: "#ff6b6b", opacity: 0.6 }}
+                            title="⚠️ Expiring soon"
+                          ></i>
+                        )}
+                      </NavLink>
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p>

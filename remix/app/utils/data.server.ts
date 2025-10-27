@@ -24,6 +24,9 @@ type FileMutation = {
   favorite?: boolean;
   // [x]: Add attr `sender/receiver`
   owner?: boolean;
+  lastAccessedAt?: string;
+  accessCount?: number;
+  updateCount?: number;
 };
 
 export type FileRecord = FileMutation & {
@@ -61,7 +64,14 @@ const fileService = {
     // Create new file
     const id = values.id || Math.random().toString(36).substring(2, 9);
     const createdAt = new Date().toISOString();
-    const newFile = { id, createdAt, ...values };
+    const newFile = {
+      id,
+      createdAt,
+      lastAccessedAt: createdAt,
+      accessCount: 1,
+      updateCount: 0,
+      ...values,
+    };
 
     // Generate token for the file (using fileId, not magnet)
     if (id) {
@@ -109,6 +119,18 @@ const fileService = {
   },
 
   async destroy(userId: string, id: string): Promise<null> {
+    // Get file to get token
+    const file = await this.get(userId, id);
+    if (file && file.token) {
+      // Update token status to "deleted" instead of deleting
+      const data = await redis.hget("unifiedTokenMap", file.token);
+      if (data) {
+        const parsed = JSON.parse(data);
+        parsed.status = "deleted";
+        await redis.hset("unifiedTokenMap", file.token, JSON.stringify(parsed));
+      }
+    }
+    // Delete from user files
     await redis.hdel(userFilesKey(userId), id);
     return null;
   },

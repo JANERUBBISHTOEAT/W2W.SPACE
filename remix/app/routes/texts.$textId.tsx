@@ -24,11 +24,23 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   invariant(params.textId, "Missing textId param");
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
-  const text = await getText(user?.sub || visitor?.sub, params.textId);
+  const userId = user?.sub || visitor?.sub;
+  const text = await getText(userId, params.textId);
   if (!text) {
     return redirect("/?message=Text+Not+Found");
   }
-  return json({ text: text });
+
+  // Update access statistics
+  const { updateText } = await import("~/utils/text.server");
+  const now = new Date().toISOString();
+  const updatedText = {
+    ...text,
+    lastAccessedAt: now,
+    accessCount: (text.accessCount || 0) + 1,
+  };
+  await updateText(userId, params.textId, updatedText);
+
+  return json({ text: updatedText });
 };
 
 interface ActionData {
@@ -49,11 +61,13 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     const content = formData.get("content") as string;
     const language = formData.get("language") as string;
     const title = formData.get("title") as string;
+    const updateCount = formData.get("updateCount");
 
     await updateText(userId, params.textId, {
       content,
       language,
       title,
+      updateCount: updateCount ? parseInt(updateCount as string) : undefined,
     });
 
     return json({
@@ -96,8 +110,9 @@ export default function TextEditor() {
     formData.append("content", content);
     formData.append("language", language);
     formData.append("title", title);
+    formData.append("updateCount", String((text.updateCount || 0) + 1));
     submit(formData, { method: "post" });
-  }, [content, language, title, submit]);
+  }, [content, language, title, text.updateCount, submit]);
 
   useEffect(() => {
     if (actionData?.success) {

@@ -14,11 +14,22 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   invariant(params.fileId, "Missing fileId param");
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
-  const file = await getFile(user?.sub || visitor?.sub, params.fileId);
+  const userId = user?.sub || visitor?.sub;
+  const file = await getFile(userId, params.fileId);
   console.log("File @loader:", file);
   if (!file) {
     return redirect("/?message=Page+Not+Found");
   }
+
+  // Update access statistics
+  const now = new Date().toISOString();
+  const updatedFile = {
+    ...file,
+    lastAccessedAt: now,
+    accessCount: (file.accessCount || 0) + 1,
+  };
+  await updateFile(userId, params.fileId, updatedFile);
+
   const url = new URL(request.url);
   const searchParams = url.searchParams;
   params = {
@@ -26,7 +37,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     fileName: searchParams.get("fileName") || undefined,
     mimeType: searchParams.get("mimeType") || undefined,
   };
-  return json({ file: file, params: params });
+  return json({ file: updatedFile, params: params });
 };
 
 export const action = async ({ params, request }: ActionFunctionArgs) => {

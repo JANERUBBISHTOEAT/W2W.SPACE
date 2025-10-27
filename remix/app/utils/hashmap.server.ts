@@ -63,7 +63,7 @@ export default class HashMap {
     await redis.hset(
       "unifiedTokenMap",
       token,
-      JSON.stringify({ type: "file", id: fileId })
+      JSON.stringify({ type: "file", id: fileId, status: "OK" })
     );
     // await redis.expire("unifiedTokenMap", expiry);
   }
@@ -115,7 +115,7 @@ export default class HashMap {
     await redis.hset(
       "unifiedTokenMap",
       token,
-      JSON.stringify({ type: "text", id: textId })
+      JSON.stringify({ type: "text", id: textId, status: "OK" })
     );
   }
 
@@ -134,18 +134,29 @@ export default class HashMap {
     textId: string | null;
     fileId: string | null;
     type: string | null;
+    status: string | null;
   }> {
-    if (!redis) return { textId: null, fileId: null, type: null };
+    if (!redis) return { textId: null, fileId: null, type: null, status: null };
     const data = await redis.hget("unifiedTokenMap", token);
-    if (!data) return { textId: null, fileId: null, type: null };
+    if (!data) return { textId: null, fileId: null, type: null, status: null };
 
     const parsed = JSON.parse(data);
     if (parsed.type === "text") {
-      return { textId: parsed.id, fileId: null, type: "text" };
+      return {
+        textId: parsed.id,
+        fileId: null,
+        type: "text",
+        status: parsed.status || "OK",
+      };
     } else if (parsed.type === "file") {
-      return { textId: null, fileId: parsed.id, type: "file" };
+      return {
+        textId: null,
+        fileId: parsed.id,
+        type: "file",
+        status: parsed.status || "OK",
+      };
     }
-    return { textId: null, fileId: null, type: null };
+    return { textId: null, fileId: null, type: null, status: null };
   }
 
   static async generateTextToken(textId: string): Promise<string | null> {
