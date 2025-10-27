@@ -196,8 +196,7 @@ export default function App() {
                         )
                       : 0;
                     const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                    const isExpired =
-                      daysSinceEdit >= 30 || file.status === "deleted";
+                    const isExpired = file.status === "deleted";
 
                     return (
                       <li key={file.id}>
@@ -206,7 +205,7 @@ export default function App() {
                           className={({ isActive, isPending }) =>
                             isActive ? "active" : isPending ? "pending" : ""
                           }
-                          to={`files/${file.id}/edit`}
+                          to={isExpired ? `/deleted` : `files/${file.id}/edit`}
                           style={{
                             textDecoration: isExpired ? "line-through" : "none",
                           }}
@@ -260,8 +259,7 @@ export default function App() {
                         )
                       : 0;
                     const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                    const isExpired =
-                      daysSinceEdit >= 30 || text.status === "deleted";
+                    const isExpired = text.status === "deleted";
 
                     return (
                       <li key={text.id}>
@@ -270,7 +268,7 @@ export default function App() {
                           className={({ isActive, isPending }) =>
                             isActive ? "active" : isPending ? "pending" : ""
                           }
-                          to={`texts/${text.id}`}
+                          to={isExpired ? `/deleted` : `texts/${text.id}`}
                           style={{
                             textDecoration: isExpired ? "line-through" : "none",
                           }}

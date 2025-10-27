@@ -25,8 +25,8 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   if (file.token) {
     const HashMap = (await import("~/utils/hashmap.server")).default;
     const tokenStatus = await HashMap.getBoth(file.token);
-    if (tokenStatus.status === "deleted") {
-      return redirect(`/files/${params.fileId}/deleted_`);
+    if (tokenStatus && tokenStatus.status === "deleted") {
+      return redirect(`/deleted`);
     }
   }
 

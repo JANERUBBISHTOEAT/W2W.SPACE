@@ -34,8 +34,8 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   if (text.token) {
     const HashMap = (await import("~/utils/hashmap.server")).default;
     const tokenStatus = await HashMap.getBoth(text.token);
-    if (tokenStatus.status === "deleted") {
-      return redirect(`/texts/${params.textId}/deleted_`);
+    if (tokenStatus && tokenStatus.status === "deleted") {
+      return redirect(`/deleted`);
     }
   }
 
