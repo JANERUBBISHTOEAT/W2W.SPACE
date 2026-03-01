@@ -349,19 +349,20 @@ export default function Index() {
     // [x] Tested download by magnet link
     else if (fetcher.data?.intent === "acquireToken") {
       console.log("Acquiring token...");
+      const target = magnet_elem ?? token_elem;
       if (!fetcher.data?.token) {
         console.error("No token found");
         console.error("No token found");
-        magnet_elem.className = "";
-        void token_elem.offsetWidth;
-        magnet_elem.classList.add("wrong-input");
+        target.className = "";
+        void target.offsetWidth;
+        target.classList.add("wrong-input");
         // return;
       } else {
         console.log("Token acquired:", fetcher.data.token);
         // Pulse anyway
-        magnet_elem.className = "";
-        void token_elem.offsetWidth;
-        magnet_elem.classList.add("correct-input");
+        target.className = "";
+        void target.offsetWidth;
+        target.classList.add("correct-input");
       }
     }
 
@@ -424,10 +425,14 @@ export default function Index() {
     torrent.on("done", async () => {
       console.log("Download finished.");
       progress_div.innerHTML = `Progress: ${(100).toFixed(2)}%`;
-      token_elem.value = "";
-      magnet_elem.value = "";
-      token_elem.className = "";
-      magnet_elem.className = "";
+      if (token_elem) {
+        token_elem.value = "";
+        token_elem.className = "";
+      }
+      if (magnet_elem) {
+        magnet_elem.value = "";
+        magnet_elem.className = "";
+      }
 
       Swal.fire({
         icon: "success",
