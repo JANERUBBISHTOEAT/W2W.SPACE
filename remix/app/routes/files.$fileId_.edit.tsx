@@ -7,7 +7,7 @@ import invariant from "tiny-invariant";
 import toastr from "toastr";
 import { fileIconMap } from "~/utils/constants";
 import { deleteFile, getFile, updateFile } from "~/utils/data.server";
-import { useBlocker } from "react-router-dom";
+import { useBlocker, useLocation } from "react-router-dom";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import { FIELD_MAX_SIZE } from "~/utils/constants";
 
@@ -123,17 +123,25 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   console.log("Updates:", updates);
 
   const now = new Date().toISOString();
-  const newFile = await updateFile(user?.sub || visitor?.sub, params.fileId, {
-    ...updates,
-    lastEditedAt: now,
-  } as any);
-  // [x]: Update token element
+  const newFile = await updateFile(
+    user?.sub || visitor?.sub,
+    params.fileId,
+    { ...updates, lastEditedAt: now } as any,
+    false,
+    true, // allowDelete: merge duplicate into existing, drop current
+  );
+  // Duplicate merged: current file was removed → redirect to existing and notify
+  if (newFile.id !== params.fileId) {
+    const message = encodeURIComponent("Existing file found");
+    return redirect(`/files/${newFile.id}/edit?message=${message}`);
+  }
   return redirect(`/files/${newFile.id}/?message=File+saved`);
 };
 
 export default function EditFile() {
   const { file: dbFileJson, params: params } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [file, setFile] = useState<File | null>(null); // [x] Used for react state
   const [token, setToken] = useState<string | null>(null);
@@ -179,6 +187,16 @@ export default function EditFile() {
     const blob = await response.blob();
     return new File([blob], params.fileName, { type: params.mimeType });
   }
+
+  // Show ?message= toast (e.g. duplicate merged redirect), then clear from URL
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const message = params.get("message");
+    if (message) {
+      toastr.info(message);
+      window.history.replaceState({}, "", location.pathname);
+    }
+  }, [location.search, location.pathname]);
 
   useEffect(() => {
     loadModule();
@@ -245,7 +263,7 @@ export default function EditFile() {
         title: "Torrent client not ready",
         text: "Please try again later",
         showConfirmButton: false,
-        timer: 2500,
+        timer: 1500,
         timerProgressBar: true,
       });
       console.error("Client not ready", clientRef.current);
@@ -275,7 +293,7 @@ export default function EditFile() {
         title: "File seeded!",
         text: "Your link is ready for sharing 🎉",
         showConfirmButton: false,
-        timer: 2500,
+        timer: 1500,
         timerProgressBar: true,
       });
     });
@@ -302,7 +320,7 @@ export default function EditFile() {
         (err) => {
           console.error("Failed to copy token: ", err);
           toastr.error("Failed to copy token");
-        }
+        },
       );
     }
   }, [fetcher.data]);
@@ -328,7 +346,7 @@ export default function EditFile() {
         (err) => {
           console.error("Failed to copy token: ", err);
           toastr.error("Failed to copy token");
-        }
+        },
       );
     }
   };
@@ -461,7 +479,7 @@ export default function EditFile() {
           onClick={async () => {
             fetcher.submit(
               { intent: "cancelSubmission" },
-              { method: "POST", action: `.` }
+              { method: "POST", action: `.` },
             );
             navigate(-1);
           }}

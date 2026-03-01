@@ -38,6 +38,20 @@ export type FileRecord = FileMutation & {
 
 const userFilesKey = (userId: string) => `user:${userId}:files`;
 
+/** Count how many file records (across all users) use this token. Same token can be shared by uploader + downloader. */
+export async function countFilesWithToken(token: string): Promise<number> {
+  let count = 0;
+  const userIds = await redis.keys("user:*:files");
+  for (const key of userIds) {
+    const files = await redis.hgetall(key);
+    for (const fileJson of Object.values(files)) {
+      const file = JSON.parse(fileJson as string);
+      if (file.token === token) count++;
+    }
+  }
+  return count;
+}
+
 // [x]: Rename
 const fileService = {
   async getAll(userId: string): Promise<FileRecord[]> {
@@ -47,9 +61,9 @@ const fileService = {
         .map((key) =>
           redis
             .hget(userFilesKey(userId), key)
-            .then((data) => (data ? JSON.parse(data) : null))
+            .then((data) => (data ? JSON.parse(data) : null)),
         )
-        .filter(Boolean)
+        .filter(Boolean),
     );
 
     // Add status from unifiedTokenMap
@@ -123,15 +137,19 @@ const fileService = {
     return newFile;
   },
 
+  /** Find existing file with same magnet+filename; optionally exclude one id (e.g. current file when updating). */
   async get_dup(
     userId: string,
-    values: FileMutation
+    values: FileMutation,
+    excludeFileId?: string,
   ): Promise<FileRecord | null> {
     const files = await fileService.getAll(userId);
-    if (!values) return null; // No values to compare
+    if (!values) return null;
     const duplicateFile = files.find(
       (file) =>
-        file.magnet === values.magnet && file.filename === values.filename
+        file.id !== excludeFileId &&
+        file.magnet === values.magnet &&
+        file.filename === values.filename,
     );
     return duplicateFile || null;
   },
@@ -139,44 +157,45 @@ const fileService = {
   async set(
     userId: string,
     id: string,
-    values: FileMutation
+    values: FileMutation,
   ): Promise<FileRecord> {
     const file = await fileService.get(userId, id);
     invariant(file, `No file found for ${id}`);
 
     const updatedFile = { ...file, ...values };
 
-    // Generate token if not exists
-    if (!updatedFile.token) {
-      const token_str = await HashMap.genToken(id);
-      updatedFile.token = token_str ?? undefined;
-      console.log("Updated token:", updatedFile.token);
-    }
+    // Token is only set at create(); do not generate on update.
 
     await redis.hset(userFilesKey(userId), id, JSON.stringify(updatedFile));
     return updatedFile;
   },
 
   async destroy(userId: string, id: string): Promise<null> {
-    // Get file to get token
     const file = await this.get(userId, id);
-    if (file && file.token) {
-      // Update token status to "deleted" instead of deleting
-      const data = await redis.hget("unifiedTokenMap", file.token);
-      if (data) {
-        const parsed = JSON.parse(data);
-        parsed.status = "deleted";
-        await redis.hset("unifiedTokenMap", file.token, JSON.stringify(parsed));
+    // Delete from user files first
+    await redis.hdel(userFilesKey(userId), id);
+    // Only mark token as "deleted" if this was the last file using it (same token can be shared by uploader + downloader)
+    if (file?.token) {
+      const count = await countFilesWithToken(file.token);
+      if (count === 0) {
+        const data = await redis.hget("unifiedTokenMap", file.token);
+        if (data) {
+          const parsed = JSON.parse(data);
+          parsed.status = "deleted";
+          await redis.hset(
+            "unifiedTokenMap",
+            file.token,
+            JSON.stringify(parsed),
+          );
+        }
       }
     }
-    // Delete from user files
-    await redis.hdel(userFilesKey(userId), id);
     return null;
   },
 
   async setByFileId(
     id: string,
-    values: FileMutation
+    values: FileMutation,
   ): Promise<FileRecord | null> {
     // Find which user owns this file
     const userIds = await redis.keys("user:*:files");
@@ -187,11 +206,7 @@ const fileService = {
 
         const updatedFile = { ...file, ...values };
 
-        // Generate token if not exists
-        if (!updatedFile.token) {
-          const token_str = await HashMap.genToken(id);
-          updatedFile.token = token_str ?? undefined;
-        }
+        // Token is only set at create(); do not generate on update.
 
         await redis.hset(key, id, JSON.stringify(updatedFile));
         return updatedFile;
@@ -201,26 +216,28 @@ const fileService = {
   },
 
   async destroyByFileId(id: string): Promise<null> {
-    // Find which user owns this file
     const userIds = await redis.keys("user:*:files");
     for (const key of userIds) {
       const fileData = await redis.hget(key, id);
       if (fileData) {
         const file: FileRecord = JSON.parse(fileData);
+        await redis.hdel(key, id);
+        // Only mark token as "deleted" if this was the last file using it
         if (file.token) {
-          // Update token status to "deleted"
-          const data = await redis.hget("unifiedTokenMap", file.token);
-          if (data) {
-            const parsed = JSON.parse(data);
-            parsed.status = "deleted";
-            await redis.hset(
-              "unifiedTokenMap",
-              file.token,
-              JSON.stringify(parsed)
-            );
+          const count = await countFilesWithToken(file.token);
+          if (count === 0) {
+            const data = await redis.hget("unifiedTokenMap", file.token);
+            if (data) {
+              const parsed = JSON.parse(data);
+              parsed.status = "deleted";
+              await redis.hset(
+                "unifiedTokenMap",
+                file.token,
+                JSON.stringify(parsed),
+              );
+            }
           }
         }
-        await redis.hdel(key, id);
         return null;
       }
     }
@@ -258,23 +275,28 @@ export async function updateFile(
   fileId: string,
   updates: FileMutation,
   force: boolean = false,
-  allowDelete: boolean = false
+  allowDelete: boolean = false,
 ) {
   const file = await fileService.get(userId, fileId);
 
   if (!file) {
     throw new Error(`No file found for ${fileId}`);
   }
-  // * Deduplicate here as `.set` has other use cases
+  // * Deduplicate: if another file already has same magnet+filename, keep that one and drop current.
   if (!force) {
-    const duplicateFile = await fileService.get_dup(userId, updates);
+    const duplicateFile = await fileService.get_dup(userId, updates, fileId);
     if (duplicateFile) {
-      if (duplicateFile.notes === updates.notes) {
-        if (allowDelete) {
-          console.log("Deleting duplicate file:", duplicateFile.id);
-          fileService.destroy(userId, fileId);
-        }
-        // Do not create, return existing file
+      const notesMatch = (duplicateFile.notes ?? "") === (updates.notes ?? "");
+      if (notesMatch && allowDelete) {
+        console.log("Deleting duplicate file:", fileId);
+        fileService.destroy(userId, fileId);
+        console.log(
+          "Duplicate file found, returning existing:",
+          duplicateFile.id,
+        );
+        return duplicateFile;
+      }
+      if (notesMatch) {
         console.log("Duplicate file found:", duplicateFile.id);
         return duplicateFile;
       }
@@ -294,7 +316,7 @@ export async function deleteFile(userId: string, id: string) {
 
 export async function updateFileByFileId(
   fileId: string,
-  updates: FileMutation
+  updates: FileMutation,
 ) {
   return fileService.setByFileId(fileId, updates);
 }
@@ -306,12 +328,12 @@ export async function deleteFileByFileId(fileId: string) {
 // Merge visitor files to existing user files
 export async function mergeFiles(
   userId: string,
-  visitorId: string
+  visitorId: string,
 ): Promise<FileRecord[]> {
   const visitorFiles = await fileService.getAll(visitorId);
   console.log("Merging", visitorFiles.length, "files from", visitorId);
   await Promise.all(
-    visitorFiles.map((file) => fileService.create(userId, file))
+    visitorFiles.map((file) => fileService.create(userId, file)),
   );
   await redis.del(userFilesKey(visitorId));
   return fileService.getAll(userId);

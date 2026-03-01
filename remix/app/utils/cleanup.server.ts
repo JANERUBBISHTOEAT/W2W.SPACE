@@ -57,23 +57,26 @@ export async function cleanupExpiredRecords() {
       // Use lastEditedAt if available, otherwise use lastAccessedAt
       const lastDate = file.lastEditedAt || file.lastAccessedAt;
       if (lastDate && lastDate < thirtyDaysAgo) {
-        // Mark as deleted in unifiedTokenMap
-        if (file.token) {
-          const HashMap = (await import("./hashmap.server")).default;
-          const tokenData = await redis.hget("unifiedTokenMap", file.token);
-          if (tokenData) {
-            const parsed = JSON.parse(tokenData);
-            parsed.status = "deleted";
-            await redis.hset(
-              "unifiedTokenMap",
-              file.token,
-              JSON.stringify(parsed)
-            );
-          }
-        }
-        // Delete from user's files to save memory
+        // Delete from user's files first
         await redis.hdel(key, id);
         deletedCount++;
+        // Only mark token as "deleted" if no other file record uses it (same token can be shared by uploader + downloader)
+        if (file.token) {
+          const { countFilesWithToken } = await import("./data.server");
+          const count = await countFilesWithToken(file.token);
+          if (count === 0) {
+            const tokenData = await redis.hget("unifiedTokenMap", file.token);
+            if (tokenData) {
+              const parsed = JSON.parse(tokenData);
+              parsed.status = "deleted";
+              await redis.hset(
+                "unifiedTokenMap",
+                file.token,
+                JSON.stringify(parsed)
+              );
+            }
+          }
+        }
         console.log(`Deleted expired file: ${id}`);
       }
     }

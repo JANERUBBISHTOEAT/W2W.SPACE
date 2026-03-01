@@ -27,7 +27,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({ error: "File not found" }, { status: 404 });
   }
 
-  // Update file
+  // Update file (may merge into existing when duplicate magnet+filename)
   const updatedFile = await updateFile(
     sub,
     formObj.fileid,
@@ -38,7 +38,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       type: formObj.filetype,
     },
     false, // not force update
-    true // allow delete when duplicate
+    true, // allow delete when duplicate
   );
+
+  // Duplicate merged: current file was removed; return redirect URL so client can navigate (fetcher does not follow redirect with full page load, so message would not show)
+  if (updatedFile.id !== formObj.fileid) {
+    const message = encodeURIComponent("Existing file found");
+    return json({
+      redirect: true,
+      url: `/files/${updatedFile.id}/edit?message=${message}`,
+    });
+  }
+
   return json({ file: updatedFile });
 };

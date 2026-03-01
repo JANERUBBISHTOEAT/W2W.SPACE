@@ -58,8 +58,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         getTexts(visitor.sub, q),
       ]);
 
-      // Merge and sort by lastEditedAt
-      const allItems = [...files, ...texts].sort((a, b) => {
+      // Merge and sort by lastEditedAt; tag each with itemType so sidebar can tell file vs text (new empty file has no filename)
+      const allItems = [
+        ...files.map((f) => ({ ...f, itemType: "file" as const })),
+        ...texts.map((t) => ({ ...t, itemType: "text" as const })),
+      ].sort((a, b) => {
         const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
         const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
         return new Date(dateB).getTime() - new Date(dateA).getTime();
@@ -80,7 +83,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       session.set("visitor", { sub: rid });
       return json(
         { files: [], texts: [], allItems: [], q, loggedIn: false },
-        { headers: { "Set-Cookie": await commitSession(session) } }
+        { headers: { "Set-Cookie": await commitSession(session) } },
       );
     }
   }
@@ -91,8 +94,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     getTexts(user.sub, q),
   ]);
 
-  // Merge and sort by lastEditedAt
-  const allItems = [...files, ...texts].sort((a, b) => {
+  // Merge and sort by lastEditedAt; tag each with itemType so sidebar can tell file vs text (new empty file has no filename)
+  const allItems = [
+    ...files.map((f) => ({ ...f, itemType: "file" as const })),
+    ...texts.map((t) => ({ ...t, itemType: "text" as const })),
+  ].sort((a, b) => {
     const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
     const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
     return new Date(dateB).getTime() - new Date(dateA).getTime();
@@ -183,8 +189,8 @@ export default function App() {
             {allItems && allItems.length > 0 ? (
               <ul>
                 {allItems.map((item: any) => {
-                  // Determine if it's a file or text
-                  const isFile = item.filename !== undefined;
+                  // Use itemType (set in loader); don't use filename - new empty file has no filename and was wrongly shown as text
+                  const isFile = item.itemType === "file";
                   const file = isFile ? item : null;
                   const text = !isFile ? item : null;
 
@@ -194,7 +200,7 @@ export default function App() {
                     const daysSinceEdit = lastDate
                       ? Math.floor(
                           (Date.now() - new Date(lastDate).getTime()) /
-                            (1000 * 60 * 60 * 24)
+                            (1000 * 60 * 60 * 24),
                         )
                       : 0;
                     const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
@@ -207,7 +213,7 @@ export default function App() {
                           className={({ isActive, isPending }) =>
                             isActive ? "active" : isPending ? "pending" : ""
                           }
-                          to={isExpired ? `/deleted` : `files/${file.id}/edit`}
+                          to={isExpired ? `/deleted` : `files/${file.id}`}
                           style={{
                             textDecoration: isExpired ? "line-through" : "none",
                           }}
@@ -257,7 +263,7 @@ export default function App() {
                     const daysSinceEdit = lastDate
                       ? Math.floor(
                           (Date.now() - new Date(lastDate).getTime()) /
-                            (1000 * 60 * 60 * 24)
+                            (1000 * 60 * 60 * 24),
                         )
                       : 0;
                     const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;

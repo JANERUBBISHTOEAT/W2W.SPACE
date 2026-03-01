@@ -1,7 +1,12 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import invariant from "tiny-invariant";
-import { createEmptyFile, updateFile } from "~/utils/data.server";
+import {
+  createEmptyFile,
+  getFile,
+  updateFile,
+  getFiles,
+} from "~/utils/data.server";
 import HashMap from "~/utils/hashmap.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 
@@ -33,39 +38,48 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       });
     }
 
-    // Try get existing file by magnet first
     const user = await getUserSession(request);
     const visitor = await getVisitorSession(request);
     const sub = user?.sub || visitor?.sub;
 
-    let existingFile = null;
-    if (sub) {
-      const { getFiles } = await import("~/utils/data.server");
+    // Existing file (edit page seed): token was created at file creation, only return it.
+    if (params.fileId !== "new" && sub) {
+      const file = await getFile(sub, params.fileId);
+      if (file?.token) {
+        return json({
+          fileId: file.id,
+          token: file.token,
+          magnet: formObj.magnet,
+          intent: "acquireToken",
+        });
+      }
+    }
+
+    // New receive (homepage paste magnet): try existing by magnet, else create one file (token only at create).
+    if (params.fileId === "new" && sub) {
       const files = await getFiles(sub);
-      existingFile = files.find((f) => f.magnet === formObj.magnet);
-    }
-
-    if (existingFile && existingFile.token) {
-      return json({ token: existingFile.token, magnet: formObj.magnet });
-    }
-
-    // Generate & save token (using fileId, not magnet)
-    // First create a temporary file to get fileId
-    const fileId = Math.random().toString(36).substring(2, 9);
-    const token = await HashMap.genToken(fileId);
-    console.log("Token:", token);
-
-    let newfile;
-    if (params.fileId === "new" && token)
-      newfile = await createReceiveFile(
+      const existingFile = files.find((f) => f.magnet === formObj.magnet);
+      if (existingFile?.token) {
+        return json({
+          token: existingFile.token,
+          magnet: formObj.magnet,
+          intent: "acquireToken",
+        });
+      }
+      const newfile = await createReceiveFile(
         request,
-        token,
-        formObj.magnet as string
+        formObj.magnet as string,
       );
+      return json({
+        fileId: newfile.id,
+        token: newfile.token ?? "",
+        magnet: formObj.magnet,
+        intent: "acquireToken",
+      });
+    }
 
     return json({
-      fileId: newfile?.id,
-      token: token,
+      token: "",
       magnet: formObj.magnet,
       intent: "acquireToken",
     });
@@ -99,19 +113,33 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     let magnet = null;
     let fileData = null;
     if (fileId) {
-      // Search globally by fileId to find magnet (not dependent on userId)
       const { getFileByFileId } = await import("~/utils/data.server");
       fileData = await getFileByFileId(fileId);
       magnet = fileData?.magnet || null;
     }
 
     let newfile;
-    if (params.fileId === "new" && magnet)
-      newfile = await createReceiveFile(
-        request,
-        formObj.token as string,
-        magnet
-      );
+    if (params.fileId === "new" && magnet) {
+      const user = await getUserSession(request);
+      const visitor = await getVisitorSession(request);
+      const sub = user?.sub || visitor?.sub;
+      // Downloader already has a file with this token → reuse it, don't create duplicate empty "New File"
+      if (sub) {
+        const { getFiles } = await import("~/utils/data.server");
+        const files = await getFiles(sub);
+        const existing = files.find((f) => f.token === token);
+        if (existing) {
+          newfile = existing;
+        }
+      }
+      if (!newfile) {
+        newfile = await createReceiveFile(
+          request,
+          magnet,
+          formObj.token as string,
+        );
+      }
+    }
 
     return json({
       fileId: newfile?.id,
@@ -123,25 +151,26 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   }
 };
 
+/**
+ * Create a new file for receiving.
+ * Token: when assignToken is omitted, use token from createEmptyFile (only place we generate).
+ * When assignToken is set (acquireMagnet flow), assign that token to the new file.
+ */
 async function createReceiveFile(
   request: Request,
-  token: string,
-  magnet: string
+  magnet: string,
+  assignToken?: string,
 ) {
-  console.log("intent: newFile");
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
-  console.log("User:", user);
-  console.log("Visitor:", visitor);
-
-  // Create new file
   const sub = user?.sub || visitor?.sub;
-  console.log("sub:", sub);
+  if (!sub) throw new Response("Unauthorized", { status: 401 });
+
   const newFile = await createEmptyFile(sub, false);
-  updateFile(sub, newFile.id, {
+  await updateFile(sub, newFile.id, {
     filename: "New File",
-    token: token,
     magnet: magnet,
+    ...(assignToken != null && assignToken !== "" && { token: assignToken }),
   });
   return newFile;
 }

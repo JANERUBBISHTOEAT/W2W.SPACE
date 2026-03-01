@@ -60,7 +60,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
     return json(
       { user: decoded },
-      { headers: { "Set-Cookie": await commitSession(session) } }
+      { headers: { "Set-Cookie": await commitSession(session) } },
     );
   }
 
@@ -71,7 +71,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
     return json(
       { user: null },
-      { headers: { "Set-Cookie": await destroySession(session) } }
+      { headers: { "Set-Cookie": await destroySession(session) } },
     );
   }
 
@@ -223,7 +223,7 @@ export default function Index() {
 
   const handleKeyDown = (
     e: React.KeyboardEvent<HTMLInputElement>,
-    type: string
+    type: string,
   ) => {
     if (e.key === "Enter") {
       const target = e.target as HTMLInputElement;
@@ -235,10 +235,10 @@ export default function Index() {
 
     // Clear input CSS
     const token_elem = document.getElementById(
-      "tokenInput"
+      "tokenInput",
     ) as HTMLInputElement;
     const magnet_elem = document.getElementById(
-      "magnetInput"
+      "magnetInput",
     ) as HTMLInputElement;
 
     if (type === "token") {
@@ -259,7 +259,7 @@ export default function Index() {
         title: "Client not ready",
         text: "Please try again later",
         showConfirmButton: false,
-        timer: 2500,
+        timer: 1500,
         timerProgressBar: true,
       });
       console.error("Client not ready", clientRef.current);
@@ -317,10 +317,10 @@ export default function Index() {
     }
 
     const token_elem = document.getElementById(
-      "tokenInput"
+      "tokenInput",
     ) as HTMLInputElement;
     const magnet_elem = document.getElementById(
-      "magnetInput"
+      "magnetInput",
     ) as HTMLInputElement;
 
     // [x] Acquire magnet link & save to history
@@ -410,13 +410,13 @@ export default function Index() {
         peers_div.innerHTML = "";
       } else {
         progress_div.innerHTML = `Progress: ${(torrent.progress * 100).toFixed(
-          2
+          2,
         )}%`;
         down_speed_div.innerHTML = `Download speed: ${prettyBytes(
-          torrent.downloadSpeed
+          torrent.downloadSpeed,
         )}/s`;
         up_speed_div.innerHTML = `Upload speed: ${prettyBytes(
-          torrent.uploadSpeed
+          torrent.uploadSpeed,
         )}/s`;
         peers_div.innerHTML = `Peers: ${torrent.numPeers}`;
       }
@@ -439,7 +439,7 @@ export default function Index() {
         title: "Download finished!",
         text: "Your file is ready for use 🎉",
         showConfirmButton: false,
-        timer: 2500,
+        timer: 1500,
         timerProgressBar: true,
       });
 
@@ -481,7 +481,7 @@ export default function Index() {
       {
         method: "POST",
         action: ".",
-      }
+      },
     );
     setLoggedIn(true);
   };
@@ -495,7 +495,7 @@ export default function Index() {
       {
         method: "POST",
         action: ".",
-      }
+      },
     );
     setLoggedIn(false);
   };
