@@ -32,7 +32,7 @@ export default function TextEditor() {
   const submit = useSubmit();
   const navigation = useNavigation();
   const [content, setContent] = useState(
-    "# Welcome to Text Editor\n\nStart typing..."
+    "# Welcome to Text Editor\n\nStart typing...",
   );
   const [isSaving, setIsSaving] = useState(false);
   const actionData = useActionData<ActionData>();

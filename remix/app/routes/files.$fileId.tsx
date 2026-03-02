@@ -1,6 +1,13 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useFetcher, useLoaderData, useLocation, useNavigate, useParams } from "@remix-run/react";
+import {
+  Form,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "@remix-run/react";
 import type { FunctionComponent } from "react";
 import { useEffect } from "react";
 import invariant from "tiny-invariant";
@@ -130,7 +137,11 @@ export default function File() {
                 action: {
                   label: "Yes, delete it!",
                   onClick: () =>
-                    (document.getElementById("destroy-file-form") as HTMLFormElement | null)?.submit(),
+                    (
+                      document.getElementById(
+                        "destroy-file-form",
+                      ) as HTMLFormElement | null
+                    )?.submit(),
                 },
                 cancel: { label: "Cancel", onClick: () => {} },
               });

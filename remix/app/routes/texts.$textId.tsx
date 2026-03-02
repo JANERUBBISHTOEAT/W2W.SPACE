@@ -145,7 +145,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       return json({
         success: false,
         message: `Content size (${(contentSize / 1024 / 1024).toFixed(
-          2
+          2,
         )}MB) exceeds the maximum limit of ${(
           TEXT_MAX_SIZE /
           1024 /
@@ -245,7 +245,9 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       await deleteTextByTextId(params.textId);
     }
     return redirect(
-      `/?message=Deleted&undoId=${encodeURIComponent(params.textId)}&undoType=text`,
+      `/?message=Deleted&undoId=${encodeURIComponent(
+        params.textId,
+      )}&undoType=text`,
     );
   }
 
@@ -257,11 +259,11 @@ export default function TextEditor() {
   const navigation = useNavigation();
   const { text } = useLoaderData<typeof loader>();
   const [content, setContent] = useState(
-    text?.content || "# Welcome\n\nStart typing..."
+    text?.content || "# Welcome\n\nStart typing...",
   );
   const [language, setLanguage] = useState(text?.language || "markdown");
   const [title, setTitle] = useState(
-    text?.title || text?.token || "Untitled Text"
+    text?.title || text?.token || "Untitled Text",
   );
 
   // Track last update to prevent overwriting local edits
