@@ -11,5 +11,5 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   const visitor = await getVisitorSession(request);
   const sub = user?.sub || visitor?.sub;
   await deleteFile(sub, params.fileId);
-  return redirect("/");
+  return redirect("/?message=Deleted");
 };

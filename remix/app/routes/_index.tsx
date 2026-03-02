@@ -4,7 +4,6 @@ import { useFetcher, useLoaderData, useLocation } from "@remix-run/react";
 import dotenv from "dotenv";
 import { jwtDecode } from "jwt-decode";
 import { useEffect, useRef, useState } from "react";
-import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { mergeFiles } from "~/utils/data.server";
@@ -254,14 +253,7 @@ export default function Index() {
 
     // Load module if not ready
     if (!clientRef.current) {
-      Swal.fire({
-        icon: "error",
-        title: "Client not ready",
-        text: "Please try again later",
-        showConfirmButton: false,
-        timer: 1500,
-        timerProgressBar: true,
-      });
+      toast.error("Client not ready. Please try again later.");
       console.error("Client not ready", clientRef.current);
       loadModule();
       return;
@@ -294,12 +286,17 @@ export default function Index() {
   };
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const message = params.get("message");
-    if (message) {
+    const search = new URLSearchParams(location.search);
+    const message = search.get("message");
+    if (!message) return;
+    if (message === "Deleted") {
+      toast.success("Deleted", {
+        action: { label: "撤回", onClick: () => {} },
+      });
+    } else {
       toast.warning(message);
-      window.history.replaceState({}, "", location.pathname);
     }
+    window.history.replaceState({}, "", location.pathname);
   }, [location]);
 
   useEffect(() => {
@@ -434,14 +431,7 @@ export default function Index() {
         magnet_elem.className = "";
       }
 
-      Swal.fire({
-        icon: "success",
-        title: "Download finished!",
-        text: "Your file is ready for use 🎉",
-        showConfirmButton: false,
-        timer: 1500,
-        timerProgressBar: true,
-      });
+      toast.success("Download finished! Your file is ready for use 🎉");
 
       for (const file of torrent.files) {
         console.log("File:", file);

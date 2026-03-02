@@ -14,7 +14,6 @@ import {
   useNavigation,
   useSubmit,
 } from "@remix-run/react";
-import "sweetalert2/dist/sweetalert2.min.css";
 import { Toaster } from "sonner";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
 import {

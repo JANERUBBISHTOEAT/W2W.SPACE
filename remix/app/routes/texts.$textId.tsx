@@ -21,7 +21,6 @@ import {
   deleteTextByTextId,
 } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
-import Swal from "sweetalert2";
 import { TEXT_MAX_SIZE, FIELD_MAX_SIZE } from "~/utils/constants";
 
 export const links: LinksFunction = () => [
@@ -300,19 +299,18 @@ export default function TextEditor() {
     submit(formData, { method: "post", fetcherKey: "save-text" });
   }, [content, language, title, text.updateCount, submit]);
 
-  const handleDelete = useCallback(async () => {
-    const result = await Swal.fire({
-      title: "Are you sure?",
-      text: "Please confirm you want to delete this text.",
-      icon: "warning",
-      showCancelButton: true,
-      confirmButtonText: "Yes, delete it!",
+  const handleDelete = useCallback(() => {
+    toast.warning("Are you sure? This text will be deleted.", {
+      action: {
+        label: "Yes, delete it!",
+        onClick: () => {
+          const formData = new FormData();
+          formData.append("intent", "delete");
+          submit(formData, { method: "post" });
+        },
+      },
+      cancel: { label: "Cancel" },
     });
-    if (result.isConfirmed) {
-      const formData = new FormData();
-      formData.append("intent", "delete");
-      submit(formData, { method: "post" });
-    }
   }, [submit]);
 
   useEffect(() => {

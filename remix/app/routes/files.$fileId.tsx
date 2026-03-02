@@ -1,9 +1,8 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
-import { Form, useFetcher, useLoaderData, useLocation } from "@remix-run/react";
+import { Form, useFetcher, useLoaderData, useLocation, useNavigate, useParams } from "@remix-run/react";
 import type { FunctionComponent } from "react";
 import { useEffect } from "react";
-import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
@@ -48,15 +47,25 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 // [x] Remove contact page, use edit page
 export default function File() {
   const location = useLocation();
-
+  const navigate = useNavigate();
+  const params = useParams();
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const message = params.get("message");
-    if (message) {
+    const search = new URLSearchParams(location.search);
+    const message = search.get("message");
+    if (!message) return;
+    const isSaved = message === "File saved";
+    if (isSaved) {
+      toast.success(message, {
+        action: {
+          label: "Edit",
+          onClick: () => navigate(`/files/${params.fileId}/edit`),
+        },
+      });
+    } else {
       toast.success(message);
-      window.history.replaceState({}, "", location.pathname);
     }
-  }, [location]);
+    window.history.replaceState({}, "", location.pathname);
+  }, [location, navigate, params.fileId]);
 
   const copyToken = (token: string) => async () => {
     await navigator.clipboard.writeText(token);
@@ -80,7 +89,7 @@ export default function File() {
       </div>
 
       <div>
-        <h1 onClick={copyToken(file.token)}>
+        <h1 onClick={copyToken(file.token ?? "")}>
           {file.filename || file.token ? (
             <>
               {file.filename} #{file.token}
@@ -112,22 +121,19 @@ export default function File() {
           </Form>
 
           <Form
+            id="destroy-file-form"
             action="destroy"
             method="post"
-            onSubmit={async (event) => {
+            onSubmit={(event) => {
               event.preventDefault();
-
-              const result = await Swal.fire({
-                title: "Are you sure?",
-                text: "Please confirm you want to delete this record.",
-                icon: "warning",
-                showCancelButton: true,
-                confirmButtonText: "Yes, delete it!",
+              toast.warning("Are you sure? This record will be deleted.", {
+                action: {
+                  label: "Yes, delete it!",
+                  onClick: () =>
+                    (document.getElementById("destroy-file-form") as HTMLFormElement | null)?.submit(),
+                },
+                cancel: { label: "Cancel", onClick: () => {} },
               });
-
-              if (result.isConfirmed) {
-                (event.target as HTMLFormElement).submit();
-              }
             }}
           >
             <button type="submit">Delete</button>

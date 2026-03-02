@@ -2,7 +2,6 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { Form, useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
-import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
@@ -72,14 +71,11 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   // * is human cancel submission
   if (formObj.intent === "cancelSubmission") {
     console.log("intent: cancelSubmission");
-    // if file is newly created, delete it
     if (!file.magnet) {
       deleteFile(user?.sub || visitor?.sub, params.fileId);
+      return json({ cancelRedirect: "/?message=Deleted" });
     }
-
-    // else, don't save changes
-    // * no need to redirect, client side will navigate(-1)
-    return null;
+    return json({ cancelRedirect: null });
   }
 
   // * Is human clicking button
@@ -149,6 +145,8 @@ export default function EditFile() {
   const fetcher = useFetcher();
 
   const clientRef = useRef<any | null>(null);
+  const torrentRef = useRef<any | null>(null);
+  const processedTokenRef = useRef<string | null>(null);
 
   async function loadModule() {
     console.log("Loading WebTorrent module");
@@ -188,15 +186,36 @@ export default function EditFile() {
     return new File([blob], params.fileName, { type: params.mimeType });
   }
 
+  // After cancel submit: navigate to redirect URL or back
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    const data = fetcher.data as { cancelRedirect?: string | null };
+    if (data.cancelRedirect === undefined) return;
+    if (typeof data.cancelRedirect === "string") {
+      navigate(data.cancelRedirect);
+    } else {
+      navigate(-1);
+    }
+  }, [fetcher.state, fetcher.data, navigate]);
+
   // Show ?message= toast (e.g. duplicate merged redirect), then clear from URL
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const message = params.get("message");
-    if (message) {
+    const search = new URLSearchParams(location.search);
+    const message = search.get("message");
+    if (!message) return;
+    const isExisting = message === "Existing file found";
+    if (isExisting) {
+      toast.info(message, {
+        action: {
+          label: "Go to file",
+          onClick: () => navigate(`/files/${dbFileJson.id}`),
+        },
+      });
+    } else {
       toast.info(message);
-      window.history.replaceState({}, "", location.pathname);
     }
-  }, [location.search, location.pathname]);
+    window.history.replaceState({}, "", location.pathname);
+  }, [location.search, location.pathname, dbFileJson.id, navigate]);
 
   useEffect(() => {
     loadModule();
@@ -258,14 +277,7 @@ export default function EditFile() {
     invariant(files, "No file selected");
 
     if (!clientRef.current || !files) {
-      Swal.fire({
-        icon: "error",
-        title: "Torrent client not ready",
-        text: "Please try again later",
-        showConfirmButton: false,
-        timer: 1500,
-        timerProgressBar: true,
-      });
+      toast.error("Torrent client not ready. Please try again later.");
       console.error("Client not ready", clientRef.current);
       loadModule();
       return;
@@ -277,6 +289,7 @@ export default function EditFile() {
     clientRef.current.seed(selectedFile, async (torrent: any) => {
       console.log("Client is seeding:", torrent.magnetURI);
       clearTimeout(timeoutId);
+      torrentRef.current = torrent;
       setTorrent(torrent);
 
       // [x] Call action with intend to acquire token
@@ -286,15 +299,6 @@ export default function EditFile() {
       fetcher.submit(formData, {
         method: "POST",
         action: "/api/" + dbFileJson.id + "/token",
-      });
-
-      Swal.fire({
-        icon: "success",
-        title: "File seeded!",
-        text: "Your link is ready for sharing 🎉",
-        showConfirmButton: false,
-        timer: 1500,
-        timerProgressBar: true,
       });
     });
 
@@ -306,22 +310,34 @@ export default function EditFile() {
   };
 
   useEffect(() => {
-    if (fetcher.data) {
-      console.log("Response data:", fetcher.data);
-      const receivedToken = fetcher.data.token || "";
-      setToken(receivedToken);
+    if (!fetcher.data?.token) return;
+    const receivedToken = String(fetcher.data.token);
+    if (processedTokenRef.current === receivedToken) return;
+    processedTokenRef.current = receivedToken;
+    setToken(receivedToken);
 
-      // Copy token to clipboard
+    const copyTokenToClipboard = () => {
       navigator.clipboard.writeText(receivedToken).then(
-        () => {
-          console.log("Token copied to clipboard");
-          toast.success("Token copied to clipboard");
-        },
-        (err) => {
-          console.error("Failed to copy token: ", err);
-          toast.error("Failed to copy token");
-        },
+        () => null, // toast.success("Copied!"),
+        () => toast.error("Failed to copy"),
       );
+    };
+
+    toast.success("File seeded! Your link is ready for sharing 🎉", {
+      action: { label: "Copy token", onClick: copyTokenToClipboard },
+    });
+
+    // Seed success: save immediately (magnet + token from ref)
+    const t = torrentRef.current;
+    if (t) {
+      const saveFormData = new FormData();
+      saveFormData.append("intent", "saveFile");
+      saveFormData.append("fileName", t.name || "New File");
+      saveFormData.append("magnet", t.magnetURI);
+      saveFormData.append("token", receivedToken);
+      saveFormData.append("fileType", t.files?.[0]?.type ?? "");
+      saveFormData.append("fileSize", String(t.length ?? 0));
+      fetcher.submit(saveFormData, { method: "POST", action: "." });
     }
   }, [fetcher.data]);
 
@@ -476,12 +492,11 @@ export default function EditFile() {
       <p>
         <button type="submit">Save</button>
         <button
-          onClick={async () => {
+          onClick={() => {
             fetcher.submit(
               { intent: "cancelSubmission" },
               { method: "POST", action: `.` },
             );
-            navigate(-1);
           }}
           type="button"
         >
