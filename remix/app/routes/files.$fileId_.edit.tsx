@@ -147,6 +147,7 @@ export default function EditFile() {
   const clientRef = useRef<any | null>(null);
   const torrentRef = useRef<any | null>(null);
   const processedTokenRef = useRef<string | null>(null);
+  const seedResolveRef = useRef<((token: string) => void) | null>(null);
 
   async function loadModule() {
     console.log("Loading WebTorrent module");
@@ -283,49 +284,63 @@ export default function EditFile() {
       return;
     }
 
-    // Seed the file
-    // setIsBlocking(true);
+    // Seed the file — resolve promise when we have token so success toast shows "Copy token"
     const selectedFile = files[0];
-    clientRef.current.seed(selectedFile, async (torrent: any) => {
-      console.log("Client is seeding:", torrent.magnetURI);
-      clearTimeout(timeoutId);
-      torrentRef.current = torrent;
-      setTorrent(torrent);
-
-      // [x] Call action with intend to acquire token
-      const formData = new FormData();
-      formData.append("intent", "acquireToken");
-      formData.append("magnet", torrent.magnetURI);
-      fetcher.submit(formData, {
-        method: "POST",
-        action: "/api/" + dbFileJson.id + "/token",
+    const seedPromise = new Promise<string>((resolve, reject) => {
+      seedResolveRef.current = resolve;
+      const timeoutId = setTimeout(
+        () => reject(new Error("Seeding timeout")),
+        120000,
+      );
+      clientRef.current.seed(selectedFile, (torrent: any) => {
+        clearTimeout(timeoutId);
+        console.log("Client is seeding:", torrent.magnetURI);
+        torrentRef.current = torrent;
+        setTorrent(torrent);
+        const formData = new FormData();
+        formData.append("intent", "acquireToken");
+        formData.append("magnet", torrent.magnetURI);
+        fetcher.submit(formData, {
+          method: "POST",
+          action: "/api/" + dbFileJson.id + "/token",
+        });
+        // resolve in useEffect when fetcher.data.token arrives
       });
     });
 
-    const timeoutId = setTimeout(() => {
-      // Prompt user that file is being seeded
-      console.log("Seeding in progress, please wait...");
-      toast.info("Seeding in progress, please wait...");
-    }, 1000);
+    toast.promise(seedPromise, {
+      loading: "Seeding...",
+      success: (token) => ({
+        message: "File seeded! Your link is ready for sharing 🎉",
+        action: {
+          label: "Copy token",
+          onClick: () =>
+            navigator.clipboard
+              .writeText(token)
+              .then(
+                () => toast.success("Copied!"),
+                () => toast.error("Failed to copy"),
+              ),
+        },
+      }),
+      error: (e) =>
+        e?.message === "Seeding timeout"
+          ? "Seeding timed out"
+          : "Seeding failed",
+    });
   };
 
   useEffect(() => {
-    if (!fetcher.data?.token) return;
-    const receivedToken = String(fetcher.data.token);
+    const data = fetcher.data as { token?: string } | undefined;
+    if (!data?.token) return;
+    const receivedToken = String(data.token);
     if (processedTokenRef.current === receivedToken) return;
     processedTokenRef.current = receivedToken;
     setToken(receivedToken);
 
-    const copyTokenToClipboard = () => {
-      navigator.clipboard.writeText(receivedToken).then(
-        () => null, // toast.success("Copied!"),
-        () => toast.error("Failed to copy"),
-      );
-    };
-
-    toast.success("File seeded! Your link is ready for sharing 🎉", {
-      action: { label: "Copy token", onClick: copyTokenToClipboard },
-    });
+    // Resolve seed promise so toast.promise shows success with "Copy token"
+    seedResolveRef.current?.(receivedToken);
+    seedResolveRef.current = null;
 
     // Seed success: save immediately (magnet + token from ref)
     const t = torrentRef.current;

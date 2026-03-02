@@ -15,6 +15,7 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import { Toaster } from "sonner";
+import "sonner/dist/styles.css";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
 import {
   commitSession,

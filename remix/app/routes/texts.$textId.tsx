@@ -240,7 +240,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     } else {
       await deleteTextByTextId(params.textId);
     }
-    return redirect("/");
+    return redirect("/?message=Deleted");
   }
 
   return json({ success: false, message: "Unknown intent" });
@@ -309,20 +309,35 @@ export default function TextEditor() {
           submit(formData, { method: "post" });
         },
       },
-      cancel: { label: "Cancel" },
+      cancel: { label: "Cancel", onClick: () => {} },
     });
   }, [submit]);
 
   useEffect(() => {
-    if (actionData) {
-      setIsSaving(false);
-      if (actionData.success) {
-        toast.success(actionData.message || "Saved successfully");
-      } else if (actionData.message) {
-        toast.error(actionData.message);
-      }
+    if (!actionData) return;
+    setIsSaving(false);
+    if (actionData.success) {
+      const msg = actionData.message || "Saved successfully";
+      const token = text?.token;
+      toast.success(msg, {
+        ...(token
+          ? {
+              action: {
+                label: "Copy token",
+                onClick: () => {
+                  navigator.clipboard.writeText(token).then(
+                    () => toast.success("Copied!"),
+                    () => toast.error("Failed to copy"),
+                  );
+                },
+              },
+            }
+          : {}),
+      });
+    } else if (actionData.message) {
+      toast.error(actionData.message);
     }
-  }, [actionData]);
+  }, [actionData, text?.token]);
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
