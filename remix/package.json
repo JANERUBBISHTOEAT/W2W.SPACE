@@ -23,7 +23,7 @@
     "jwt-decode": "^4.0.0",
     "lodash": "^4.17.21",
     "match-sorter": "^6.3.1",
-    "monaco-editor": "^0.54.0",
+    "monaco-editor": "^0.55.1",
     "react": "^18.2.0",
     "react-dom": "^18.3.1",
     "sonner": "^2.0.7",
@@ -50,6 +50,11 @@
     "typescript": "^5.1.6",
     "vite": "^5.1.4",
     "vite-tsconfig-paths": "^4.3.1"
+  },
+  "overrides": {
+    "tar": "^7.5.8",
+    "dompurify": "^3.2.4",
+    "esbuild": "^0.25.0"
   },
   "engines": {
     "node": ">=20.0.0"
