@@ -319,12 +319,16 @@ export default function Index() {
     }
   }, [restoreFetcher.state]);
 
+  const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     const message = search.get("message");
     const undoId = search.get("undoId");
     const undoType = search.get("undoType");
     if (!message) return;
+    const key = `${location.pathname}:${location.search}`;
+    if (shownMessageKeyRef.current === key) return;
+    shownMessageKeyRef.current = key;
     if (
       message === "Deleted" &&
       undoId &&

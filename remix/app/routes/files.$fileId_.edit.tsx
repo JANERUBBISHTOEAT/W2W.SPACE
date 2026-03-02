@@ -205,11 +205,15 @@ export default function EditFile() {
     }
   }, [fetcher.state, fetcher.data, navigate]);
 
-  // Show ?message= toast (e.g. duplicate merged redirect), then clear from URL
+  // Show ?message= toast (e.g. duplicate merged redirect), then clear from URL (ref prevents double toast in Remix)
+  const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     const message = search.get("message");
     if (!message) return;
+    const key = `${location.pathname}:${location.search}`;
+    if (shownMessageKeyRef.current === key) return;
+    shownMessageKeyRef.current = key;
     const isExisting = message === "Existing file found";
     if (isExisting) {
       toast.info(message, {

@@ -9,7 +9,7 @@ import {
   useParams,
 } from "@remix-run/react";
 import type { FunctionComponent } from "react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
@@ -56,10 +56,14 @@ export default function File() {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
+  const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     const message = search.get("message");
     if (!message) return;
+    const key = `${location.pathname}:${location.search}`;
+    if (shownMessageKeyRef.current === key) return;
+    shownMessageKeyRef.current = key;
     const isSaved = message === "File saved";
     if (isSaved) {
       toast.success(message, {

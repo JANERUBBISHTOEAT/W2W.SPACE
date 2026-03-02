@@ -321,8 +321,11 @@ export default function TextEditor() {
     });
   }, [submit]);
 
+  const shownActionDataRef = useRef<typeof actionData>(null);
   useEffect(() => {
     if (!actionData) return;
+    if (shownActionDataRef.current === actionData) return;
+    shownActionDataRef.current = actionData;
     setIsSaving(false);
     if (actionData.success) {
       const msg = actionData.message || "Saved successfully";

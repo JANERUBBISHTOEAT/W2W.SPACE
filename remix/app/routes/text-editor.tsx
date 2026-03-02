@@ -46,11 +46,13 @@ export default function TextEditor() {
     submit(formData, { method: "post" });
   }, [content, submit]);
 
+  const shownActionDataRef = useRef<typeof actionData>(null);
   useEffect(() => {
-    if (actionData?.success) {
-      setIsSaving(false);
-      toast.success(actionData.message || "Saved successfully");
-    }
+    if (!actionData?.success) return;
+    if (shownActionDataRef.current === actionData) return;
+    shownActionDataRef.current = actionData;
+    setIsSaving(false);
+    toast.success(actionData.message || "Saved successfully");
   }, [actionData]);
 
   const handleEditorDidMount = (editor: any, monaco: any) => {
