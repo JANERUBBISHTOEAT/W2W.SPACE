@@ -15,7 +15,7 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import "sweetalert2/dist/sweetalert2.min.css";
-import "toastr/build/toastr.min.css";
+import { Toaster } from "sonner";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
 import {
   commitSession,
@@ -27,12 +27,10 @@ import {
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
   { rel: "stylesheet", href: "/css/all.min.css" },
-  { rel: "stylesheet", href: "/css/toastr.min.css" },
   { rel: "stylesheet", href: "/css/text-editor.css" },
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  // [x]: Add user authentication
   const url = new URL(request.url);
   const q = url.searchParams.get("q");
   const user = await getUserSession(request);
@@ -69,9 +67,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       });
 
       return json({
-        files: files,
-        texts: texts,
-        allItems: allItems,
+        files,
+        texts,
+        allItems,
         q,
         loggedIn: false,
       });
@@ -105,9 +103,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   return json({
-    files: files,
-    texts: texts,
-    allItems: allItems,
+    files,
+    texts,
+    allItems,
     q,
     loggedIn: true,
   });
@@ -149,6 +147,7 @@ export default function App() {
         <Links />
       </head>
       <body>
+        <Toaster richColors position="top-center" />
         {/* <script type="module">
           import WebTorrent from 'webtorrent.min.js'
         </script> */}

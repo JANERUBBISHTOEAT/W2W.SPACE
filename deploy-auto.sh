@@ -60,7 +60,7 @@ print_header() {
 print_footer() {
     end_time=$(date +%s)
     total_time=$((end_time - start_time))
-    
+
     echo ""
     echo -e "${CYAN}======================================${NC}"
     echo -e "${GREEN}    Deployment Complete!${NC}"

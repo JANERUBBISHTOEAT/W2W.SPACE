@@ -6,7 +6,7 @@ import { jwtDecode } from "jwt-decode";
 import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
-import toastr from "toastr";
+import { toast } from "sonner";
 import { mergeFiles } from "~/utils/data.server";
 import { prettyBytes } from "~/utils/functions";
 import HashMap from "~/utils/hashmap.server";
@@ -297,7 +297,7 @@ export default function Index() {
     const params = new URLSearchParams(location.search);
     const message = params.get("message");
     if (message) {
-      toastr.warning(message);
+      toast.warning(message);
       window.history.replaceState({}, "", location.pathname);
     }
   }, [location]);
@@ -451,7 +451,7 @@ export default function Index() {
 
     debounceTimeout.current = setTimeout(() => {
       console.log("Download in progress, please wait...");
-      toastr.info("Download in progress, please wait...");
+      toast.info("Download in progress, please wait...");
     }, 1000);
   }, [fetcher.data]);
 

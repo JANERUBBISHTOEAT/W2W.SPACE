@@ -3,7 +3,7 @@ import { ActionFunctionArgs, json } from "@remix-run/node";
 import { useActionData, useNavigation, useSubmit } from "@remix-run/react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor from "@monaco-editor/react";
-import toastr from "toastr";
+import { toast } from "sonner";
 
 interface ActionData {
   success?: boolean;
@@ -49,7 +49,7 @@ export default function TextEditor() {
   useEffect(() => {
     if (actionData?.success) {
       setIsSaving(false);
-      toastr.success(actionData.message || "Saved successfully");
+      toast.success(actionData.message || "Saved successfully");
     }
   }, [actionData]);
 

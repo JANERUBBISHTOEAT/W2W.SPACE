@@ -5,7 +5,7 @@ import type { FunctionComponent } from "react";
 import { useEffect } from "react";
 import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
-import toastr from "toastr";
+import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
 import type { FileRecord } from "~/utils/data.server";
 import { getFile, getFileByFileId, updateFile } from "~/utils/data.server";
@@ -53,14 +53,14 @@ export default function File() {
     const params = new URLSearchParams(location.search);
     const message = params.get("message");
     if (message) {
-      toastr.success(message);
+      toast.success(message);
       window.history.replaceState({}, "", location.pathname);
     }
   }, [location]);
 
   const copyToken = (token: string) => async () => {
     await navigator.clipboard.writeText(token);
-    toastr.success("Token copied to clipboard");
+    toast.success("Token copied to clipboard");
   };
 
   const { file: file } = useLoaderData<typeof loader>();

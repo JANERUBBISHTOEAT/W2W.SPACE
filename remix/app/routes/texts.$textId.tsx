@@ -9,7 +9,7 @@ import {
 } from "@remix-run/react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor from "@monaco-editor/react";
-import toastr from "toastr";
+import { toast } from "sonner";
 import invariant from "tiny-invariant";
 import type { TextRecord } from "~/utils/text.server";
 import {
@@ -319,9 +319,9 @@ export default function TextEditor() {
     if (actionData) {
       setIsSaving(false);
       if (actionData.success) {
-        toastr.success(actionData.message || "Saved successfully");
+        toast.success(actionData.message || "Saved successfully");
       } else if (actionData.message) {
-        toastr.error(actionData.message);
+        toast.error(actionData.message);
       }
     }
   }, [actionData]);
@@ -379,7 +379,7 @@ export default function TextEditor() {
   const copyToken = async () => {
     if (text?.token) {
       await navigator.clipboard.writeText(text.token);
-      toastr.success("Token copied to clipboard");
+      toast.success("Token copied to clipboard");
     }
   };
 

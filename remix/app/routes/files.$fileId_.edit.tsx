@@ -4,7 +4,7 @@ import { Form, useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
 import { useEffect, useRef, useState } from "react";
 import Swal from "sweetalert2";
 import invariant from "tiny-invariant";
-import toastr from "toastr";
+import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
 import { deleteFile, getFile, updateFile } from "~/utils/data.server";
 import { useBlocker, useLocation } from "react-router-dom";
@@ -193,7 +193,7 @@ export default function EditFile() {
     const params = new URLSearchParams(location.search);
     const message = params.get("message");
     if (message) {
-      toastr.info(message);
+      toast.info(message);
       window.history.replaceState({}, "", location.pathname);
     }
   }, [location.search, location.pathname]);
@@ -301,7 +301,7 @@ export default function EditFile() {
     const timeoutId = setTimeout(() => {
       // Prompt user that file is being seeded
       console.log("Seeding in progress, please wait...");
-      toastr.info("Seeding in progress, please wait...");
+      toast.info("Seeding in progress, please wait...");
     }, 1000);
   };
 
@@ -315,11 +315,11 @@ export default function EditFile() {
       navigator.clipboard.writeText(receivedToken).then(
         () => {
           console.log("Token copied to clipboard");
-          toastr.success("Token copied to clipboard");
+          toast.success("Token copied to clipboard");
         },
         (err) => {
           console.error("Failed to copy token: ", err);
-          toastr.error("Failed to copy token");
+          toast.error("Failed to copy token");
         },
       );
     }
@@ -341,11 +341,11 @@ export default function EditFile() {
       navigator.clipboard.writeText(text.value).then(
         () => {
           console.log("Token copied to clipboard");
-          toastr.success("Token copied to clipboard");
+          toast.success("Token copied to clipboard");
         },
         (err) => {
           console.error("Failed to copy token: ", err);
-          toastr.error("Failed to copy token");
+          toast.error("Failed to copy token");
         },
       );
     }
