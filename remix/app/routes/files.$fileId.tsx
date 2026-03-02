@@ -66,12 +66,13 @@ export default function File() {
     shownMessageKeyRef.current = key;
     const isSaved = message === "File saved";
     if (isSaved) {
-      toast.success(message, {
-        action: {
-          label: "Edit",
-          onClick: () => navigate(`/files/${params.fileId}/edit`),
-        },
-      });
+      // [x]: replaced by sonner promise
+      // toast.success(message, {
+      //   action: {
+      //     label: "Edit",
+      //     onClick: () => navigate(`/files/${params.fileId}/edit`),
+      //   },
+      // });
     } else {
       toast.success(message);
     }
