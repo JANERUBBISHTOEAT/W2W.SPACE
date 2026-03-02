@@ -15,10 +15,12 @@ import type { TextRecord } from "~/utils/text.server";
 import {
   getText,
   getTextByTextId,
+  getUserIdForTextId,
   updateText,
   updateTextByTextId,
   deleteText,
   deleteTextByTextId,
+  saveTextUndo,
 } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import { TEXT_MAX_SIZE, FIELD_MAX_SIZE } from "~/utils/constants";
@@ -234,13 +236,17 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       });
     }
 
-    // Proceed with delete if user is owner or if no owner check needed
+    // Save undo then delete
+    const undoUserId = userId || (await getUserIdForTextId(params.textId));
+    if (text && undoUserId) await saveTextUndo(undoUserId, params.textId, text);
     if (userId) {
       await deleteText(userId, params.textId);
     } else {
       await deleteTextByTextId(params.textId);
     }
-    return redirect("/?message=Deleted");
+    return redirect(
+      `/?message=Deleted&undoId=${encodeURIComponent(params.textId)}&undoType=text`,
+    );
   }
 
   return json({ success: false, message: "Unknown intent" });

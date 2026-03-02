@@ -5,7 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
-import { deleteFile, getFile, updateFile } from "~/utils/data.server";
+import {
+  deleteFile,
+  getFile,
+  saveFileUndo,
+  updateFile,
+} from "~/utils/data.server";
 import { useBlocker, useLocation } from "react-router-dom";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
 import { FIELD_MAX_SIZE } from "~/utils/constants";
@@ -73,7 +78,8 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     console.log("intent: cancelSubmission");
     if (!file.magnet) {
       deleteFile(user?.sub || visitor?.sub, params.fileId);
-      return json({ cancelRedirect: "/?message=Deleted" });
+      const message = encodeURIComponent(" Aborted ");
+      return redirect(`/?message=${message}`);
     }
     return json({ cancelRedirect: null });
   }
@@ -315,12 +321,10 @@ export default function EditFile() {
         action: {
           label: "Copy token",
           onClick: () =>
-            navigator.clipboard
-              .writeText(token)
-              .then(
-                () => toast.success("Copied!"),
-                () => toast.error("Failed to copy"),
-              ),
+            navigator.clipboard.writeText(token).then(
+              () => toast.success("Copied!"),
+              () => toast.error("Failed to copy"),
+            ),
         },
       }),
       error: (e) =>

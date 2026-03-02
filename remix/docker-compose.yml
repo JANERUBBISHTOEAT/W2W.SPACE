@@ -6,6 +6,11 @@ services:
     image: jwilder/nginx-proxy
     container_name: nginx-proxy
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "80:80"
       - "443:443"
@@ -22,6 +27,11 @@ services:
     image: nginxproxy/acme-companion
     container_name: nginx-proxy-acme
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./acme:/etc/acme.sh
@@ -38,6 +48,11 @@ services:
     image: zheyuanwei/w2w
     container_name: remix
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       - VIRTUAL_HOST=${VIRTUAL_HOST}
       - VIRTUAL_PORT=${VIRTUAL_PORT}
@@ -55,6 +70,11 @@ services:
     image: redis
     container_name: redis
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     volumes:
       - redis-data:/data
 

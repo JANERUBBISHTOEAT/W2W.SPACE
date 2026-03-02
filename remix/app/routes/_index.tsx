@@ -1,6 +1,11 @@
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
 import { ActionFunctionArgs, json, LoaderFunction } from "@remix-run/node";
-import { useFetcher, useLoaderData, useLocation } from "@remix-run/react";
+import {
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+} from "@remix-run/react";
 import dotenv from "dotenv";
 import { jwtDecode } from "jwt-decode";
 import { useEffect, useRef, useState } from "react";
@@ -120,6 +125,13 @@ export default function Index() {
   const clientRef = useRef<any | null>(null);
   const client_id = googleClientId || "";
   const fetcher = useFetcher<any>();
+  const restoreFetcher = useFetcher<{
+    success?: boolean;
+    url?: string;
+    error?: string;
+  }>();
+  const restoreHandledRef = useRef(false);
+  const navigate = useNavigate();
   const [loggedIn, setLoggedIn] = useState(initialUser ? true : false);
   const [user, setUser] = useState<Record<string, any> | null>(null);
   const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -285,16 +297,57 @@ export default function Index() {
     }
   };
 
+  // After restore API success: navigate to restored file/text (once per response)
+  useEffect(() => {
+    if (restoreFetcher.state !== "idle" || !restoreFetcher.data) return;
+    const d = restoreFetcher.data;
+    if (d.success && d.url && !restoreHandledRef.current) {
+      restoreHandledRef.current = true;
+      toast.success("Restored");
+      navigate(d.url);
+    } else if (d.error) {
+      toast.error(d.error);
+    }
+  }, [restoreFetcher.state, restoreFetcher.data, navigate]);
+  // Reset so next restore can navigate again
+  useEffect(() => {
+    if (
+      restoreFetcher.state === "submitting" ||
+      restoreFetcher.state === "loading"
+    ) {
+      restoreHandledRef.current = false;
+    }
+  }, [restoreFetcher.state]);
+
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     const message = search.get("message");
+    const undoId = search.get("undoId");
+    const undoType = search.get("undoType");
     if (!message) return;
-    if (message === "Deleted") {
+    if (
+      message === "Deleted" &&
+      undoId &&
+      (undoType === "file" || undoType === "text")
+    ) {
       toast.success("Deleted", {
-        action: { label: "撤回", onClick: () => {} },
+        action: {
+          label: "Undo",
+          onClick: () => {
+            const fd = new FormData();
+            fd.append("undoId", undoId);
+            fd.append("undoType", undoType);
+            restoreFetcher.submit(fd, {
+              method: "POST",
+              action: "/api/restore",
+            });
+          },
+        },
       });
+    } else if (message === "Deleted") {
+      toast.success("Deleted");
     } else {
-      toast.warning(message);
+      toast.info(message);
     }
     window.history.replaceState({}, "", location.pathname);
   }, [location]);

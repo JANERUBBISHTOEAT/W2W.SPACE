@@ -255,6 +255,18 @@ export async function getTextByTextId(textId: string) {
   return textService.getByTextId(textId);
 }
 
+/** Find which user owns this textId (for undo when deleting by textId). */
+export async function getUserIdForTextId(
+  textId: string
+): Promise<string | null> {
+  const userIds = await redis.keys("user:*:texts");
+  for (const key of userIds) {
+    const match = key.match(/^user:(.+):texts$/);
+    if (match && (await redis.hget(key, textId))) return match[1];
+  }
+  return null;
+}
+
 export async function updateText(
   userId: string,
   textId: string,
@@ -278,6 +290,52 @@ export async function updateTextByTextId(
   updates: TextMutation
 ) {
   return textService.setByTextId(textId, updates);
+}
+
+const UNDO_TTL_SEC = 60;
+
+export async function saveTextUndo(
+  userId: string,
+  textId: string,
+  text: TextRecord
+): Promise<void> {
+  await redis.set(
+    `undo:text:${textId}`,
+    JSON.stringify({ userId, text }),
+    "EX",
+    UNDO_TTL_SEC
+  );
+}
+
+export async function getTextUndo(
+  textId: string
+): Promise<{ userId: string; text: TextRecord } | null> {
+  const raw = await redis.get(`undo:text:${textId}`);
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+export async function restoreTextFromUndo(
+  textId: string
+): Promise<TextRecord | null> {
+  const data = await getTextUndo(textId);
+  if (!data) return null;
+  const { userId, text } = data;
+  await redis.hset(userTextsKey(userId), text.id, JSON.stringify(text));
+  if (text.token) {
+    const existing = await redis.hget("unifiedTokenMap", text.token);
+    if (existing) {
+      const parsed = JSON.parse(existing);
+      parsed.status = "OK";
+      await redis.hset(
+        "unifiedTokenMap",
+        text.token,
+        JSON.stringify(parsed)
+      );
+    }
+  }
+  await redis.del(`undo:text:${textId}`);
+  return text;
 }
 
 export async function deleteText(userId: string, id: string) {

@@ -310,6 +310,52 @@ export async function updateFile(
   return newFile;
 }
 
+const UNDO_TTL_SEC = 60;
+
+export async function saveFileUndo(
+  userId: string,
+  fileId: string,
+  file: FileRecord,
+): Promise<void> {
+  await redis.set(
+    `undo:file:${fileId}`,
+    JSON.stringify({ userId, file }),
+    "EX",
+    UNDO_TTL_SEC,
+  );
+}
+
+export async function getFileUndo(
+  fileId: string,
+): Promise<{ userId: string; file: FileRecord } | null> {
+  const raw = await redis.get(`undo:file:${fileId}`);
+  if (!raw) return null;
+  return JSON.parse(raw);
+}
+
+export async function restoreFileFromUndo(
+  fileId: string,
+): Promise<FileRecord | null> {
+  const data = await getFileUndo(fileId);
+  if (!data) return null;
+  const { userId, file } = data;
+  await redis.hset(userFilesKey(userId), file.id, JSON.stringify(file));
+  if (file.token) {
+    const existing = await redis.hget("unifiedTokenMap", file.token);
+    if (existing) {
+      const parsed = JSON.parse(existing);
+      parsed.status = "OK";
+      await redis.hset(
+        "unifiedTokenMap",
+        file.token,
+        JSON.stringify(parsed),
+      );
+    }
+  }
+  await redis.del(`undo:file:${fileId}`);
+  return file;
+}
+
 export async function deleteFile(userId: string, id: string) {
   await fileService.destroy(userId, id);
 }
