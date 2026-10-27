@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { config } from "dotenv";
-import { createCookieSessionStorage } from "@remix-run/node";
-import type { Session } from "@remix-run/node";
+import {
+  createCookieSessionStorage,
+  type Session,
+} from "react-router";
 
 export interface SessionIdentity {
   sub: string;

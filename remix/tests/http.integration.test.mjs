@@ -1,8 +1,31 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import test from "node:test";
-import { buildFuture, createClient, startApplication } from "./helpers.mjs";
+import {
+  UNSAFE_decodeViaTurboStream,
+  UNSAFE_SingleFetchRedirectSymbol,
+} from "react-router";
+import { createClient, startApplication } from "./helpers.mjs";
 
-const dataPath = (path, route) => `${path}?_data=${encodeURIComponent(route)}`;
+const require = createRequire(import.meta.url);
+const textRoute = "routes/texts.$textId";
+const dataPath = (path, route) => `${path === "/" ? "/_root" : path}.data?_routes=${encodeURIComponent(route)}`;
+
+async function decodeStream(response) {
+  assert.match(response.headers.get("content-type") ?? "", /text\/x-script/);
+  const { value } = await UNSAFE_decodeViaTurboStream(response.body, globalThis);
+  return value;
+}
+
+async function decodeData(response, route) {
+  const value = await decodeStream(response);
+  const result = route ? value[route] : value;
+  assert(result && typeof result === "object", "Expected a router data result");
+  if (result.error) throw result.error;
+  assert("data" in result, "Expected route data, not an error or redirect");
+  return result.data;
+}
 
 async function visitor(baseURL) {
   const request = createClient(baseURL);
@@ -19,25 +42,28 @@ async function createText(request) {
   assert.equal(response.status, 302);
   const path = response.headers.get("location");
   assert.match(path, /^\/texts\/[^/?]+$/);
-  return { path, id: path.split("/").pop(), data: dataPath(path, "routes/texts.$textId") };
+  return { path, id: path.split("/").pop(), data: dataPath(path, textRoute) };
 }
 
 async function readText(request, path) {
   const response = await request(path);
   assert.equal(response.status, 200);
-  return (await response.json()).text;
+  return (await decodeData(response, textRoute)).text;
 }
 
 test("production HTTP workflows and session boundaries", { timeout: 60000 }, async (t) => {
   const app = await startApplication();
   t.after(app.stop);
 
-  await t.test("health reports the intended revision; Single Fetch remains disabled", async () => {
+  await t.test("health reports the intended revision on the patched router runtime", async () => {
     const response = await createClient(app.baseURL)("/health");
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("set-cookie"), null);
     assert.deepEqual(await response.json(), { status: "ok", version: "test-revision" });
-    assert.equal((await buildFuture(app.redis)).v3_singleFetch, false);
+    const { version } = JSON.parse(await readFile(require.resolve("react-router/package.json"), "utf8"));
+    const [major, minor, patch] = version.split(".").map(Number);
+    assert.equal(major, 7);
+    assert(minor > 18 || (minor === 18 && patch >= 4), "React Router must include the 7.18.4 security fixes");
   });
 
   await t.test("creation requires a session; home creates a visitor session", async () => {
@@ -57,6 +83,29 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert((await response.text()).length > 100);
   });
 
+  await t.test("Remix 2 signed visitor cookies retain identity and reject tampering", async () => {
+    const cookie = app.legacySessionCookie({ visitor: { sub: "legacy-remix2-visitor", name: "旧会话" } });
+    const request = createClient(app.baseURL, cookie);
+    const response = await request("/");
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("set-cookie"), null, "an existing visitor must not be replaced");
+    const text = await createText(request);
+    const secondClient = createClient(app.baseURL, cookie);
+    const saved = await readText(secondClient, text.data);
+    assert.equal(saved.owner, true, "the old cookie must retain access to its own collection");
+    assert.equal(saved.id, text.id);
+    const tampered = createClient(app.baseURL, cookie + "tampered");
+    assert.equal((await tampered("/api/new/text", {})).status, 401);
+    const deleted = await secondClient(text.data, { intent: "delete" });
+    assert.equal(deleted.status, 202);
+    const redirect = await decodeStream(deleted);
+    assert.equal(redirect.status, 302);
+    const destination = new URL(redirect.redirect, app.baseURL);
+    assert.equal(destination.pathname, "/");
+    assert.equal(destination.searchParams.get("undoId"), text.id);
+    assert.equal(destination.searchParams.get("undoType"), "text");
+  });
+
   await t.test("text saves, shares, permits collaboration and preserves empty content", async () => {
     const owner = await visitor(app.baseURL);
     const collaborator = await visitor(app.baseURL);
@@ -69,7 +118,7 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
       intent: "save", title: "Unicode regression", content: "共享文本 ✓", language: "plaintext", updateCount: "1",
     });
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).success, true);
+    assert.equal((await decodeData(response)).success, true);
     const saved = await readText(collaborator, text.data);
     assert.equal(saved.content, "共享文本 ✓");
     assert.equal(saved.title, "Unicode regression");
@@ -77,12 +126,17 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     response = await collaborator(`/token/${created.token}`);
     assert.equal(response.status, 302);
     assert.equal(response.headers.get("location"), text.path);
+    response = await collaborator(dataPath(`/token/${created.token}`, "routes/token.$token"));
+    assert.equal(response.status, 202);
+    const sharedRedirect = (await decodeStream(response))[UNSAFE_SingleFetchRedirectSymbol];
+    assert.equal(sharedRedirect.status, 302);
+    assert.equal(sharedRedirect.redirect, text.path);
 
     response = await collaborator(text.data, {
       intent: "save", title: "Empty content", content: "", language: "plaintext", updateCount: "2",
     });
     assert.equal(response.status, 200);
-    assert.equal((await response.json()).success, true);
+    assert.equal((await decodeData(response)).success, true);
     const empty = await readText(owner, text.data);
     assert.equal(empty.content, "");
     assert.equal(empty.updateCount, 2);
@@ -191,24 +245,70 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert.equal(response.headers.get("set-cookie"), null);
     const state = await request(dataPath("/", "routes/_index"));
     assert.equal(state.status, 200);
-    assert.equal((await state.json()).user, null);
+    assert.equal((await decodeData(state, "routes/_index")).user, null);
   });
 
   await t.test("Google login rejects missing, opaque and cross-origin requests", async () => {
     const request = await visitor(app.baseURL);
     const form = { intent: "OAuthCallback", credential: "not-a-jwt" };
-    for (const headers of [
-      {},
-      { Origin: "null" },
-      { Origin: "https://attacker.invalid" },
-      { Origin: app.baseURL, "Sec-Fetch-Site": "cross-site" },
+    for (const [headers, expectedStatus] of [
+      [{}, 403],
+      [{ Origin: "null" }, 400],
+      [{ Origin: "https://attacker.invalid" }, 400],
+      [{ Origin: app.baseURL.replace("http:", "https:") }, 400],
+      [{ Origin: app.baseURL, "Sec-Fetch-Site": "cross-site" }, 403],
     ]) {
-      // Remix 2 rejects mismatched Origin on document submissions before the
-      // route runs. Exercise the fetcher action path used by GoogleLogin so the
-      // application's own Origin checks must reject every case with 403.
-      const response = await request(dataPath("/", "routes/_index"), form, headers);
-      assert.equal(response.status, 403, JSON.stringify(headers));
+      // RR7 rejects mismatched/opaque origins with 400 before running the action.
+      // Missing Origin and contradictory Fetch Metadata reach our stricter gate.
+      const response = await request(dataPath("/", "routes/_index") + "&index", form, headers);
+      assert.equal(response.status, expectedStatus, JSON.stringify(headers));
       assert.equal(response.headers.get("set-cookie"), null);
     }
+  });
+
+  await t.test("HTTPS proxy forwarding is accepted only from configured immediate peers", async (t) => {
+    const origin = "https://w2w-test.invalid:8443";
+    const forwarded = {
+      Origin: origin,
+      "X-Forwarded-Proto": "https",
+      "X-Forwarded-Host": "w2w-test.invalid:8443",
+      "X-Forwarded-Port": "8443",
+      Forwarded: 'for=192.0.2.10;proto=https;host="w2w-test.invalid:8443"',
+    };
+    const loginPath = dataPath("/", "routes/_index") + "&index";
+    const invalidLogin = { intent: "OAuthCallback", credential: "not-a-jwt" };
+
+    const untrustedClient = await visitor(app.baseURL);
+    let response = await untrustedClient(loginPath, invalidLogin, forwarded);
+    assert.equal(response.status, 400, "untrusted forwarding headers must not make a foreign Origin valid");
+
+    const proxied = await startApplication({ trustedProxyCIDRs: "127.0.0.1/32,::1/128" });
+    t.after(proxied.stop);
+    const client = await visitor(proxied.baseURL);
+    const text = await createText(client);
+    response = await client(text.data, {
+      intent: "save", title: "HTTPS forwarding", content: "Saved behind the trusted proxy", language: "plaintext", updateCount: "1",
+    }, forwarded);
+    assert.equal(response.status, 200);
+    assert.equal((await decodeData(response)).success, true);
+    assert.equal((await readText(client, text.data)).content, "Saved behind the trusted proxy");
+
+    response = await client(loginPath, invalidLogin, forwarded);
+    assert.equal(response.status, 401, "matching HTTPS origin must reach credential validation");
+    assert.equal(response.headers.get("set-cookie"), null);
+    response = await client(loginPath, invalidLogin, { ...forwarded, Origin: "https://attacker.invalid" });
+    assert.equal(response.status, 400, "a trusted proxy must not allow a foreign browser origin");
+    assert.equal((await client(text.path, { intent: "delete" })).status, 302);
+
+    const unrelatedProxy = await startApplication({ trustedProxyCIDRs: "192.0.2.1/32" });
+    t.after(unrelatedProxy.stop);
+    const directClient = await visitor(unrelatedProxy.baseURL);
+    response = await directClient(loginPath, invalidLogin, {
+      ...forwarded,
+      Origin: unrelatedProxy.baseURL,
+    });
+    assert.equal(response.status, 401, "untrusted headers must not change the port or scheme of a direct same-origin request");
+    response = await directClient(loginPath, invalidLogin, forwarded);
+    assert.equal(response.status, 400, "enabling trust for another peer must not trust the local caller");
   });
 });

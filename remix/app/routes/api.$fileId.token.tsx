@@ -1,5 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { type ActionFunctionArgs } from "react-router";
 import invariant from "tiny-invariant";
 import {
   countFilesWithToken,
@@ -18,40 +17,40 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   const user = await getUserSession(request);
   const visitor = await getVisitorSession(request);
   const sub = user?.sub || visitor?.sub;
-  if (!sub) return json({ error: "A session is required" }, { status: 401 });
+  if (!sub) return Response.json({ error: "A session is required" }, { status: 401 });
 
   const formData = await request.formData();
   const intent = formData.get("intent");
   if (intent === "acquireToken") {
     const magnet = formData.get("magnet");
     if (typeof magnet !== "string" || !magnet.startsWith("magnet:?") || new TextEncoder().encode(magnet).length > FIELD_MAX_SIZE) {
-      return json({ error: "A valid magnet link is required" }, { status: 400 });
+      return Response.json({ error: "A valid magnet link is required" }, { status: 400 });
     }
     if (params.fileId !== "new") {
       const file = await getFile(sub, params.fileId);
-      if (!file?.token) return json({ error: "File not found" }, { status: 404 });
-      return json({ fileId: file.id, token: file.token, magnet, intent });
+      if (!file?.token) return Response.json({ error: "File not found" }, { status: 404 });
+      return Response.json({ fileId: file.id, token: file.token, magnet, intent });
     }
     const existing = (await getFiles(sub)).find((file) => file.magnet === magnet);
     const file = existing?.token ? existing : await createReceiveFile(sub, magnet);
-    return json({ fileId: file.id, token: file.token, magnet, intent });
+    return Response.json({ fileId: file.id, token: file.token, magnet, intent });
   }
 
   if (intent === "acquireMagnet") {
     const token = formData.get("token");
     if (typeof token !== "string" || !token || token.length > FIELD_MAX_SIZE) {
-      return json({ error: "A token is required" }, { status: 400 });
+      return Response.json({ error: "A token is required" }, { status: 400 });
     }
     const mapping = await HashMap.getBoth(token);
     if (mapping.status === "deleted") {
-      return json({ error: "This shared item was deleted" }, { status: 404 });
+      return Response.json({ error: "This shared item was deleted" }, { status: 404 });
     }
     if (mapping.type === "text" && mapping.textId) {
-      return json({ intent, textId: mapping.textId, magnet: null, type: "text" });
+      return Response.json({ intent, textId: mapping.textId, magnet: null, type: "text" });
     }
     const source = mapping.type === "file" ? await getFileByToken(token) : null;
     if (!source?.magnet) {
-      return json({ intent, type: null, magnet: null, token });
+      return Response.json({ intent, type: null, magnet: null, token });
     }
     let fileId: string | undefined;
     if (params.fileId === "new") {
@@ -59,10 +58,10 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       const file = existing ?? await createReceiveFile(sub, source.magnet, token);
       fileId = file.id;
     }
-    return json({ fileId, magnet: source.magnet, token, intent, type: "file" });
+    return Response.json({ fileId, magnet: source.magnet, token, intent, type: "file" });
   }
 
-  return json({ error: "Unknown intent" }, { status: 400 });
+  return Response.json({ error: "Unknown intent" }, { status: 400 });
 };
 
 async function createReceiveFile(sub: string, magnet: string, token?: string) {

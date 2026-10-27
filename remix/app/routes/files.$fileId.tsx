@@ -1,12 +1,14 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
 import {
+  type ActionFunctionArgs,
+  type LoaderFunctionArgs,
+  data,
+  redirect,
   Form,
   Link,
   useFetcher,
   useLoaderData,
   useLocation,
-} from "@remix-run/react";
+} from "react-router";
 import type { FunctionComponent } from "react";
 import { useEffect, useRef } from "react";
 import invariant from "tiny-invariant";
@@ -43,7 +45,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     const HashMap = (await import("~/utils/hashmap.server")).default;
     if ((await HashMap.getBoth(file.token)).status === "deleted") return redirect("/deleted");
   }
-  return json({ file, canManage });
+  return data({ file, canManage });
 };
 
 export const action = async ({ params, request }: ActionFunctionArgs) => {

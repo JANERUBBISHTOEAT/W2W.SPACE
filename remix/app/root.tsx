@@ -1,7 +1,10 @@
 import "@fortawesome/fontawesome-free/css/all.min.css";
-import type { LinksFunction, LoaderFunctionArgs } from "@remix-run/node";
-import { ActionFunctionArgs, json, redirect } from "@remix-run/node";
 import {
+  type LinksFunction,
+  type LoaderFunctionArgs,
+  type ActionFunctionArgs,
+  data,
+  redirect,
   Form,
   Link,
   Links,
@@ -13,7 +16,7 @@ import {
   useLoaderData,
   useNavigation,
   useSubmit,
-} from "@remix-run/react";
+} from "react-router";
 import { Toaster } from "sonner";
 import "sonner/dist/styles.css";
 import { randomUUID } from "node:crypto";
@@ -68,7 +71,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       });
 
-      return json({
+      return data({
         files,
         texts,
         allItems,
@@ -81,7 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const rid = randomUUID();
       console.log("New visitor session:", rid);
       session.set("visitor", { sub: rid });
-      return json(
+      return data(
         { files: [], texts: [], allItems: [], q, loggedIn: false },
         { headers: { "Set-Cookie": await commitSession(session) } },
       );
@@ -104,7 +107,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return new Date(dateB).getTime() - new Date(dateA).getTime();
   });
 
-  return json({
+  return data({
     files,
     texts,
     allItems,

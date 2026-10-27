@@ -1,4 +1,7 @@
-import { ActionFunctionArgs, redirect } from "@remix-run/node";
+import {
+  type ActionFunctionArgs,
+  redirect,
+} from "react-router";
 import { createEmptyText } from "~/utils/text.server";
 import { requireSessionIdentity } from "~/utils/session.server";
 

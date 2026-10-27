@@ -1,8 +1,14 @@
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
 import type { CredentialResponse } from "@react-oauth/google";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
+import {
+  type ActionFunctionArgs,
+  type LoaderFunctionArgs,
+  data,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { getFileByToken, mergeFiles } from "~/utils/data.server";
@@ -34,7 +40,7 @@ interface HomeActionData {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getUserSession(request);
-  return json({ googleClientId: process.env.GOOGLE_CLIENT_ID || "", user: user ?? null });
+  return data({ googleClientId: process.env.GOOGLE_CLIENT_ID || "", user: user ?? null });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -56,22 +62,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Invalid Origin is rejected below.
     }
     if (!sameHost || request.headers.get("Sec-Fetch-Site") === "cross-site") {
-      return json({ error: "Login must originate from this site" }, { status: 403 });
+      return data({ error: "Login must originate from this site" }, { status: 403 });
     }
     const audience = process.env.GOOGLE_CLIENT_ID;
     if (!audience) {
-      return json({ error: "Google login is not configured" }, { status: 503 });
+      return data({ error: "Google login is not configured" }, { status: 503 });
     }
     const credential = formData.get("credential");
     if (typeof credential !== "string" || !credential) {
-      return json({ error: "Google credential is required" }, { status: 400 });
+      return data({ error: "Google credential is required" }, { status: 400 });
     }
 
     let identity: SessionIdentity;
     try {
       identity = await verifyGoogleCredential(credential, audience);
     } catch {
-      return json({ error: "Google login could not be verified" }, { status: 401 });
+      return data({ error: "Google login could not be verified" }, { status: 401 });
     }
 
     const session = await getSession(request);
@@ -81,34 +87,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       session.unset("visitor");
     }
     session.set("user", identity);
-    return json({ user: identity }, { headers: { "Set-Cookie": await commitSession(session) } });
+    return data({ user: identity }, { headers: { "Set-Cookie": await commitSession(session) } });
   }
 
   if (intent === "Logout") {
     const session = await getSession(request);
-    return json({ user: null }, { headers: { "Set-Cookie": await destroySession(session) } });
+    return data({ user: null }, { headers: { "Set-Cookie": await destroySession(session) } });
   }
 
   if (intent === "acquireMagnet") {
     const token = formData.get("token");
     if (typeof token !== "string" || !token) {
-      return json({ error: "Token is required" }, { status: 400 });
+      return data({ error: "Token is required" }, { status: 400 });
     }
     const result = await HashMap.getBoth(token);
     if (result.status === "deleted") {
-      return json({ intent, type: null, magnet: null });
+      return data({ intent, type: null, magnet: null });
     }
     if (result.textId) {
-      return json({ intent, textId: result.textId, magnet: null, type: "text" });
+      return data({ intent, textId: result.textId, magnet: null, type: "text" });
     }
     if (result.type === "file") {
       const file = await getFileByToken(token);
-      if (file?.magnet) return json({ intent, fileId: file.id, magnet: file.magnet, type: "file" });
+      if (file?.magnet) return data({ intent, fileId: file.id, magnet: file.magnet, type: "file" });
     }
-    return json({ intent, magnet: null, type: null });
+    return data({ intent, magnet: null, type: null });
   }
 
-  return json({ error: "Unknown intent" }, { status: 400 });
+  return data({ error: "Unknown intent" }, { status: 400 });
 };
 
 async function downloadTorrentFile(file: BrowserTorrentFile) {

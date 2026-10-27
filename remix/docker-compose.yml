@@ -61,6 +61,7 @@ services:
       - NODE_ENV=production
       - SESSION_SECRET=${SESSION_SECRET:?Set a unique SESSION_SECRET of at least 32 characters}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - TRUSTED_PROXY_CIDRS=${TRUSTED_PROXY_CIDRS:?Set the verified immediate reverse proxy addresses or CIDRs}
       - REDIS_HOST=${REDIS_HOST:-redis}
       - REDIS_PORT=${REDIS_PORT:-6379}
     depends_on:

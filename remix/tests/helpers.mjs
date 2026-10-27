@@ -1,15 +1,21 @@
-import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHmac, randomBytes } from "node:crypto";
 import { access, mkdtemp, rm } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 const appDirectory = fileURLToPath(new URL("../", import.meta.url));
-const execFileAsync = promisify(execFile);
+
+// Remix 2.17.5 server-runtime/cookies + @remix-run/node cookie-signature format.
+// This implementation is intentionally independent of the new router's signer.
+function legacySessionCookie(data, secret) {
+  const value = Buffer.from(JSON.stringify(data), "utf8").toString("base64");
+  const signature = createHmac("sha256", secret).update(value).digest("base64").replace(/=+$/, "");
+  return `session=${encodeURIComponent(`${value}.${signature}`)}`;
+}
 
 async function unusedPort() {
   const server = createServer();
@@ -133,7 +139,7 @@ export async function startRedis() {
 }
 
 /** Starts the built production application against its own disposable Redis. */
-export async function startApplication() {
+export async function startApplication({ trustedProxyCIDRs = "" } = {}) {
   await access(join(appDirectory, "build/server/index.js"));
   const redis = await startRedis();
   const sessionSecret = randomBytes(32).toString("hex");
@@ -150,8 +156,7 @@ export async function startApplication() {
     const port = await unusedPort();
     const baseURL = `http://127.0.0.1:${port}`;
     process = startProcess(globalThis.process.execPath, [
-      join(appDirectory, "node_modules/@remix-run/serve/dist/cli.js"),
-      "build/server/index.js",
+      join(appDirectory, "server.mjs"),
     ], {
       cwd: appDirectory,
       env: {
@@ -164,6 +169,7 @@ export async function startApplication() {
         SESSION_SECRET: sessionSecret,
         GOOGLE_CLIENT_ID: "w2w-integration-test.apps.googleusercontent.com",
         APP_REVISION: "test-revision",
+        TRUSTED_PROXY_CIDRS: trustedProxyCIDRs,
       },
     }, [sessionSecret]);
     await waitFor(async () => {
@@ -173,40 +179,22 @@ export async function startApplication() {
         throw new Error(`Application readiness returned HTTP ${response.status}`);
       }
     }, process, "Production application");
-    return { baseURL, redis, stop, diagnostics: process.diagnostics };
+    return {
+      baseURL,
+      redis,
+      stop,
+      diagnostics: process.diagnostics,
+      legacySessionCookie: (data) => legacySessionCookie(data, sessionSecret),
+    };
   } catch (error) {
     await stop();
     throw error;
   }
 }
 
-/** Inspect the built flags in a short-lived process, closing imported Redis clients. */
-export async function buildFuture(redis) {
-  const script = `
-    const build = await import(${JSON.stringify(new URL("../build/server/index.js", import.meta.url).href)});
-    process.stdout.write('W2W_TEST_FUTURE=' + JSON.stringify(build.future) + '\\n', () => process.exit(0));
-  `;
-  const { stdout } = await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
-    cwd: appDirectory,
-    env: {
-      ...process.env,
-      NODE_ENV: "production",
-      SESSION_SECRET: randomBytes(32).toString("hex"),
-      REDIS_HOST: redis.host,
-      REDIS_PORT: String(redis.port),
-    },
-    timeout: 10000,
-    killSignal: "SIGKILL",
-    maxBuffer: 256 * 1024,
-  });
-  const marker = stdout.split("\n").find((line) => line.startsWith("W2W_TEST_FUTURE="));
-  if (!marker) throw new Error("Built application did not export future flags");
-  return JSON.parse(marker.slice("W2W_TEST_FUTURE=".length));
-}
-
 /** A manual cookie jar lets these local HTTP tests use production Secure cookies. */
-export function createClient(baseURL) {
-  let cookie;
+export function createClient(baseURL, initialCookie) {
+  let cookie = initialCookie;
   return async (path, form, headers = {}) => {
     const response = await fetch(baseURL + path, {
       method: form ? "POST" : "GET",

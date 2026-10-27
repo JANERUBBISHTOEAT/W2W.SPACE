@@ -42,7 +42,7 @@ verify() {
   rm -f -- "$verification_file"
   (
     cd "$repo_dir/remix"
-    npm ci --no-audit --no-fund --strict-ssl=true --engine-strict
+    npm ci --cache "${npm_config_cache:-${NPM_CONFIG_CACHE:-$HOME/.npm}}" --no-audit --no-fund --strict-ssl=true --engine-strict
     npm run typecheck
     npm run lint
     npm run build

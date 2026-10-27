@@ -1,5 +1,10 @@
-import { ActionFunctionArgs, json } from "@remix-run/node";
-import { useActionData, useNavigation, useSubmit } from "@remix-run/react";
+import {
+  type ActionFunctionArgs,
+  data,
+  useActionData,
+  useNavigation,
+  useSubmit,
+} from "react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
@@ -17,19 +22,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "save") {
     console.log("Saving content:", content);
-    return json({
+    return data({
       success: true,
       message: "Content saved successfully",
       content: content,
     });
   }
 
-  return json({ success: false, message: "Unknown intent" });
+  return data({ success: false, message: "Unknown intent" });
 };
 
 export default function TextEditor() {
   const submit = useSubmit();
   const navigation = useNavigation();
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
   const [content, setContent] = useState(
     "# Welcome to Text Editor\n\nStart typing...",
   );
@@ -112,7 +121,7 @@ export default function TextEditor() {
       </div>
 
       <div id="text-editor-wrapper">
-        {typeof window !== "undefined" ? (
+        {hasMounted ? (
           <MonacoEditor
             height="100%"
             defaultLanguage="markdown"

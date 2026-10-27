@@ -1,15 +1,14 @@
-import type {
-  ActionFunctionArgs,
-  LinksFunction,
-  LoaderFunctionArgs,
-} from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
 import {
+  type ActionFunctionArgs,
+  type LinksFunction,
+  type LoaderFunctionArgs,
+  data,
+  redirect,
   useActionData,
   useLoaderData,
   useNavigation,
   useSubmit,
-} from "@remix-run/react";
+} from "react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
@@ -119,7 +118,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     console.log("Failed to re-fetch latest text:", error);
   }
 
-  return json({ text: latestText });
+  return data({ text: latestText });
 };
 
 interface ActionData {
@@ -145,7 +144,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     // Check content size
     const contentSize = new TextEncoder().encode(content).length;
     if (contentSize > TEXT_MAX_SIZE) {
-      return json({
+      return data({
         success: false,
         message: `Content size (${(contentSize / 1024 / 1024).toFixed(
           2,
@@ -159,7 +158,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
     // Check field sizes
     if (title && new TextEncoder().encode(title).length > FIELD_MAX_SIZE) {
-      return json({
+      return data({
         success: false,
         message: `Title exceeds the maximum limit of ${(
           FIELD_MAX_SIZE / 1024
@@ -196,7 +195,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
           });
         } catch (globalError) {
           console.error("Failed to update text globally:", globalError);
-          return json({
+          return data({
             success: false,
             message: "Failed to save text",
           });
@@ -213,7 +212,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       });
     }
 
-    return json({
+    return data({
       success: true,
       message: "Saved successfully",
     });
@@ -221,7 +220,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 
   if (intent === "delete") {
     if (!userId) {
-      return json(
+      return data(
         { success: false, message: "Only the owner can delete this text" },
         { status: 403 },
       );
@@ -231,7 +230,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     // display flag or knowledge of the public sharing URL.
     const text = await getText(userId, params.textId);
     if (!text) {
-      return json(
+      return data(
         { success: false, message: "Only the owner can delete this text" },
         { status: 403 },
       );
@@ -247,12 +246,16 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
     );
   }
 
-  return json({ success: false, message: "Unknown intent" });
+  return data({ success: false, message: "Unknown intent" });
 };
 
 export default function TextEditor() {
   const submit = useSubmit();
   const navigation = useNavigation();
+  const [hasMounted, setHasMounted] = useState(false);
+  useEffect(() => {
+    setHasMounted(true);
+  }, []);
   const { text } = useLoaderData<typeof loader>();
   const [content, setContent] = useState(
     text.content ?? "# Welcome\n\nStart typing...",
@@ -483,7 +486,7 @@ export default function TextEditor() {
       </div>
 
       <div id="text-editor-wrapper">
-        {typeof window !== "undefined" ? (
+        {hasMounted ? (
           <MonacoEditor
             height="100%"
             language={language}

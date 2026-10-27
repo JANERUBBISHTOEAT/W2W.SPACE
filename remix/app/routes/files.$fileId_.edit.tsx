@@ -1,6 +1,15 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useFetcher, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
+import {
+  type ActionFunctionArgs,
+  type LoaderFunctionArgs,
+  data,
+  redirect,
+  Form,
+  useActionData,
+  useFetcher,
+  useLoaderData,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import invariant from "tiny-invariant";
 import { toast } from "sonner";
@@ -24,7 +33,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     accessCount: (file.accessCount || 0) + 1,
   });
   const search = new URL(request.url).searchParams;
-  return json({
+  return data({
     file: updated,
     pasted: search.get("pasted") === "true",
     fileName: search.get("fileName") || "Pasted file",
@@ -43,7 +52,7 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       await deleteFile(sub, params.fileId);
       return redirect("/?message=Aborted");
     }
-    return json({ cancelRedirect: null });
+    return data({ cancelRedirect: null });
   }
 
   const getString = (name: string, fallback = "") => {
@@ -57,10 +66,10 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   const rawSize = getString("fileSize");
   const size = rawSize ? Number(rawSize) : (file.size ?? 0);
   if (!filename || !magnet.startsWith("magnet:?") || !Number.isSafeInteger(size) || size < 0) {
-    return json({ error: "A filename, magnet link and valid file size are required" }, { status: 400 });
+    return data({ error: "A filename, magnet link and valid file size are required" }, { status: 400 });
   }
   if ([filename, magnet, notes, type].some((value) => new TextEncoder().encode(value).length > FIELD_MAX_SIZE)) {
-    return json({ error: `File details must each be at most ${FIELD_MAX_SIZE} bytes` }, { status: 400 });
+    return data({ error: `File details must each be at most ${FIELD_MAX_SIZE} bytes` }, { status: 400 });
   }
   const updated = await updateFile(sub, params.fileId, {
     filename,

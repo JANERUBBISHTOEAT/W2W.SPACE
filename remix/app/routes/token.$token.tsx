@@ -1,5 +1,7 @@
-import type { LoaderFunctionArgs } from "@remix-run/node";
-import { redirect } from "@remix-run/node";
+import {
+  type LoaderFunctionArgs,
+  redirect,
+} from "react-router";
 import invariant from "tiny-invariant";
 import HashMap from "~/utils/hashmap.server";
 

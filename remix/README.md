@@ -1,6 +1,6 @@
 # W2W development
 
-The maintained application uses Node 24.22.1 (see `../.node-version`), npm 11.19.1, and Redis.
+The maintained React Router 7 application uses Node 24.22.1 (see `../.node-version`), npm 11.19.1, and Redis.
 
 ```bash
 cd remix
@@ -28,7 +28,7 @@ npm test
 
 Tests start isolated Redis and production app processes, choose temporary ports/data directories, and clean up afterward. They do not use or flush your development Redis. Set `REDIS_SERVER` to the absolute Redis binary/wrapper path when it is not on PATH. Build before testing so HTTP checks exercise the current server artifact.
 
-`npm start` runs the production build. Supply `SESSION_SECRET` securely (at least 32 characters) and Redis connection settings; production refuses the old public fallback secret. `/health` checks Redis and returns the embedded `APP_REVISION`. Google login additionally needs the correct `GOOGLE_CLIENT_ID` and HTTPS access to Google's certificate endpoint. Browser WebTorrent requires a secure context (HTTPS or localhost) and working peer/tracker connectivity.
+`npm start` runs the production build. Supply `SESSION_SECRET` securely (at least 32 characters) and Redis connection settings; production refuses the old public fallback secret. `/health` checks Redis and returns the embedded `APP_REVISION`. Production uses `server.mjs`; behind HTTPS termination, configure verified immediate proxy addresses in `TRUSTED_PROXY_CIDRS` and ensure the proxy overwrites forwarding headers. Untrusted peers cannot spoof protocol/host/port. Google login additionally needs the correct `GOOGLE_CLIENT_ID` and HTTPS access to Google's certificate endpoint. Browser WebTorrent requires a secure context (HTTPS or localhost) and working peer/tracker connectivity.
 
 The npm scripts target the Linux development/deployment environment. Use WSL or an equivalent POSIX shell on Windows.
 

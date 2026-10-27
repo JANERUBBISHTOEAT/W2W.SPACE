@@ -20,6 +20,16 @@ the reverse proxy, Redis versions, or the production data schema.
   must use `W2W_IMAGE`. Keep its existing Compose project identity, network,
   volume and proxy routing. Supply `SESSION_SECRET` securely, at least 32
   characters; keep its value out of commands, logs and images.
+- Configure `TRUSTED_PROXY_CIDRS` with the verified immediate nginx proxy IPs
+  or CIDRs. The application defaults to trusting no forwarding headers; aliases,
+  wildcards and all-address ranges are rejected. Verify nginx overwrites
+  `X-Forwarded-Proto` and `X-Forwarded-Host`. Recheck this configuration if proxy
+  addresses change. Do not use a broad private range as a convenience exception.
+- React Router 7 preserves sharing URLs, resource JSON APIs and Redis records.
+  Same-secret signed cookies remain compatible. Its browser data protocol has
+  changed: existing Remix 2 tabs must reload once after rollout. Do not keep old
+  and new application instances serving incompatible browser data protocols
+  interchangeably. No Redis schema migration is needed.
 - `GOOGLE_CLIENT_ID` is optional for anonymous use. If OAuth is enabled, verify
   the production origin/client ID separately. Changing the session secret
   invalidates existing cookies; assess and communicate that before deployment.

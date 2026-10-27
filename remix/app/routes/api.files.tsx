@@ -1,5 +1,4 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { json } from "@remix-run/node";
+import { type ActionFunctionArgs } from "react-router";
 import { getFile, updateFile } from "~/utils/data.server";
 import { requireSessionIdentity } from "~/utils/session.server";
 import { FIELD_MAX_SIZE } from "~/utils/constants";
@@ -9,7 +8,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const fileId = formData.get("fileid");
   if (typeof fileId !== "string" || !fileId) {
-    return json({ error: "fileid is required" }, { status: 400 });
+    return Response.json({ error: "fileid is required" }, { status: 400 });
   }
   const readString = (name: string) => {
     const value = formData.get(name);
@@ -22,13 +21,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const size = sizeValue === undefined ? undefined : Number(sizeValue);
   if ((size !== undefined && (!Number.isSafeInteger(size) || size < 0)) ||
       [filename, magnet, filetype].some((value) => value !== undefined && Buffer.byteLength(value) > FIELD_MAX_SIZE)) {
-    return json({ error: "Invalid file metadata" }, { status: 400 });
+    return Response.json({ error: "Invalid file metadata" }, { status: 400 });
   }
 
   // Check if file exists
   const file = await getFile(sub, fileId);
   if (!file) {
-    return json({ error: "File not found" }, { status: 404 });
+    return Response.json({ error: "File not found" }, { status: 404 });
   }
 
   // Update file (may merge into existing when duplicate magnet+filename)
@@ -48,11 +47,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   // Duplicate merged: current file was removed; return redirect URL so client can navigate (fetcher does not follow redirect with full page load, so message would not show)
   if (updatedFile.id !== fileId) {
     const message = encodeURIComponent("Existing file found");
-    return json({
+    return Response.json({
       redirect: true,
       url: `/files/${updatedFile.id}/edit?message=${message}`,
     });
   }
 
-  return json({ file: updatedFile });
+  return Response.json({ file: updatedFile });
 };
