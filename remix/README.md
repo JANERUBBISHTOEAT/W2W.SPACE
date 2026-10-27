@@ -1,64 +1,35 @@
-# Welcome to Remix
+# W2W development
 
-- [Remix Docs](https://remix.run/docs)
+The maintained application uses Node 24.22.1 (see `../.node-version`), npm 11.19.1, and Redis.
 
-## Development
-
-From your terminal:
-
-```sh
-redis-server .\app\redis.windows.conf
-npm run dev
+```bash
+cd remix
+npm ci
+mkdir -p .cache/redis
+redis-server --bind 127.0.0.1 --port 6379 --dir "$PWD/.cache/redis" --appendonly yes
 ```
 
-This starts your app in development mode, rebuilding assets on file changes.
+In another terminal in `remix/`:
 
-## Deployment
-
-Local: build docker image the push to docker hub
-
-```sh
-# amd64
-docker build -t zheyuanwei/w2w .
-docker push zheyuanwei/w2w
-
-# arm64 to amd64
-docker buildx build --platform=linux/amd64 -t zheyuanwei/w2w:latest --push .
-
-# docker run --rm -p 3000:3000 --network="host" --pull=always zheyuanwei/w2w
+```bash
+NODE_ENV=development REDIS_HOST=127.0.0.1 REDIS_PORT=6379 npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
 
-Remote: run docker-compose
+The Windows Redis configuration in `app/` uses a different port; use the explicit local settings above. Anonymous development requires no Google credentials. Development generates a per-process session secret if `SESSION_SECRET` is absent, so cookies reset when the server restarts.
 
-```sh
-docker-compose down
-docker-compose pull
-docker-compose up -d
+## Validation
+
+```bash
+npm run typecheck
+npm run lint
+npm run build
+npm test
 ```
 
-Clean up:
+Tests start isolated Redis and production app processes, choose temporary ports/data directories, and clean up afterward. They do not use or flush your development Redis. Set `REDIS_SERVER` to the absolute Redis binary/wrapper path when it is not on PATH. Build before testing so HTTP checks exercise the current server artifact.
 
-```sh
-docker rmi -f $(docker images -q)
-docker image prune -a
-y
-docker system prune -a --volumes
-y
-docker stop $(docker ps -aq)
-docker rm $(docker ps -aq)
-```
+`npm start` runs the production build. Supply `SESSION_SECRET` securely (at least 32 characters) and Redis connection settings; production refuses the old public fallback secret. `/health` checks Redis and returns the embedded `APP_REVISION`. Google login additionally needs the correct `GOOGLE_CLIENT_ID` and HTTPS access to Google's certificate endpoint. Browser WebTorrent requires a secure context (HTTPS or localhost) and working peer/tracker connectivity.
 
-HTTPS (necessary for WebCrypto API, which is necessary for WebTorrent):
+The npm scripts target the Linux development/deployment environment. Use WSL or an equivalent POSIX shell on Windows.
 
-```sh
-openssl req -x509 -nodes -newkey rsa:4096 -keyout server.key -out server.crt
-```
-
-### DIY
-
-If you're familiar with deploying node applications, the built-in Remix app server is production-ready.
-
-Make sure to deploy the output of `remix build`
-
-- `build/server`
-- `build/client`
+See [compatibility and residual dependency advisories](../docs/COMPATIBILITY.md) and [release/rollback procedures](../docs/RELEASE.md). Container builds use the committed lockfile, exclude local secrets, and run as an unprivileged user. Do not use the historical cleanup/deployment commands to stop the entire host or prune rollback images.

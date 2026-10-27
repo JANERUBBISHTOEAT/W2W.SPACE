@@ -3,12 +3,36 @@
 .gitignore
 
 # Docker
+dockerfile
 Dockerfile
 *.dockerfile
+docker-compose*.yml
+docker-compose*.yaml
 
 # node
-package-lock.json
 node_modules
+build/
+.cache/
+coverage/
+*.log
+
+# Runtime configuration and credentials are injected at startup, never baked in.
+.env
+.env.*
+**/.env
+**/.env.*
+.npmrc
+**/.npmrc
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+**/*.key
+**/*.pem
+**/*.crt
+**/*.p12
+**/*.pfx
 
 # other
 README.md

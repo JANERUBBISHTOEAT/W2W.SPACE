@@ -5,21 +5,14 @@ import HashMap from "~/utils/hashmap.server";
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   invariant(params.token, "Missing token param");
-  const token = params.token;
-
-  // Check unified token map
-  const result = await HashMap.getBoth(token);
-
+  const result = await HashMap.getBoth(params.token);
+  if (result.status === "deleted") return redirect("/deleted");
   if (result.type === "text" && result.textId) {
-    // Token exists as text, redirect to text
     return redirect(`/texts/${result.textId}`);
   }
-
-  if (result.type === "file" && result.magnet) {
-    // Token exists as file, redirect to file via token
-    return redirect(`/token/${token}`);
+  if (result.type === "file" && result.fileId) {
+    // The home page resolves the token and starts receiving the shared file.
+    return redirect(`/?token=${encodeURIComponent(params.token)}`);
   }
-
-  // If not found, redirect to home with error
-  return redirect(`/?message=Invalid+Token`);
+  return redirect("/?message=Invalid+Token");
 };

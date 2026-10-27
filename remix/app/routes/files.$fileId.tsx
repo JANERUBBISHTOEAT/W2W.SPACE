@@ -2,11 +2,10 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
   Form,
+  Link,
   useFetcher,
   useLoaderData,
   useLocation,
-  useNavigate,
-  useParams,
 } from "@remix-run/react";
 import type { FunctionComponent } from "react";
 import { useEffect, useRef } from "react";
@@ -15,7 +14,7 @@ import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
 import type { FileRecord } from "~/utils/data.server";
 import { getFile, getFileByFileId, updateFile } from "~/utils/data.server";
-import { getUserSession, getVisitorSession } from "~/utils/session.server";
+import { getUserSession, getVisitorSession, requireSessionIdentity } from "~/utils/session.server";
 import { prettyBytes } from "~/utils/functions";
 
 export const loader = async ({ params, request }: LoaderFunctionArgs) => {
@@ -30,6 +29,8 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     file = await getFile(userId, params.fileId);
   }
 
+  const canManage = !!file;
+
   // If not found by userId, search globally by fileId
   if (!file) {
     file = await getFileByFileId(params.fileId);
@@ -38,15 +39,19 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   if (!file) {
     return redirect("/?message=Page+Not+Found");
   }
-  return json({ file: file });
+  if (file.token) {
+    const HashMap = (await import("~/utils/hashmap.server")).default;
+    if ((await HashMap.getBoth(file.token)).status === "deleted") return redirect("/deleted");
+  }
+  return json({ file, canManage });
 };
 
 export const action = async ({ params, request }: ActionFunctionArgs) => {
   invariant(params.fileId, "Missing fileId param");
   const formData = await request.formData();
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  return updateFile(user?.sub || visitor?.sub, params.fileId, {
+  const { sub } = await requireSessionIdentity(request);
+  if (!await getFile(sub, params.fileId)) throw new Response("Not Found", { status: 404 });
+  return updateFile(sub, params.fileId, {
     favorite: formData.get("favorite") === "true",
   });
 };
@@ -54,8 +59,6 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
 // [x] Remove contact page, use edit page
 export default function File() {
   const location = useLocation();
-  const navigate = useNavigate();
-  const params = useParams();
   const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
@@ -64,27 +67,20 @@ export default function File() {
     const key = `${location.pathname}:${location.search}`;
     if (shownMessageKeyRef.current === key) return;
     shownMessageKeyRef.current = key;
-    const isSaved = message === "File saved";
-    if (isSaved) {
-      // [x]: replaced by sonner promise
-      // toast.success(message, {
-      //   action: {
-      //     label: "Edit",
-      //     onClick: () => navigate(`/files/${params.fileId}/edit`),
-      //   },
-      // });
-    } else {
-      toast.success(message);
-    }
+    if (message !== "File saved") toast.success(message);
     window.history.replaceState({}, "", location.pathname);
-  }, [location, navigate, params.fileId]);
+  }, [location]);
 
   const copyToken = (token: string) => async () => {
-    await navigator.clipboard.writeText(token);
-    toast.success("Token copied to clipboard");
+    try {
+      await navigator.clipboard.writeText(token);
+      toast.success("Token copied to clipboard");
+    } catch {
+      toast.error("Could not copy the token. Please copy it manually.");
+    }
   };
 
-  const { file: file } = useLoaderData<typeof loader>();
+  const { file, canManage } = useLoaderData<typeof loader>();
   return (
     <div id="contact">
       <div>
@@ -101,7 +97,7 @@ export default function File() {
       </div>
 
       <div>
-        <h1 onClick={copyToken(file.token ?? "")}>
+        <h1>
           {file.filename || file.token ? (
             <>
               {file.filename} #{file.token}
@@ -109,16 +105,11 @@ export default function File() {
           ) : (
             <i>No Name</i>
           )}{" "}
-          <Favorite file={file} />
+          {file.token ? <button type="button" onClick={copyToken(file.token)}>Copy token</button> : null}
         </h1>
 
-        <p></p>
-
-        {0 && file.notes ? (
-          <p>
-            Shared with <a href={`/users/${file.notes}`}>{file.notes}</a>
-          </p>
-        ) : null}
+        {canManage ? <Favorite file={file} /> : null}
+        {file.token ? <p><Link to={`/?token=${encodeURIComponent(file.token)}`}>Receive file</Link></p> : null}
         {file.size ? <p>Size: {prettyBytes(file.size)}</p> : null}
         {file.notes ? (
           <>
@@ -126,7 +117,7 @@ export default function File() {
           </>
         ) : null}
 
-        <div>
+        {canManage ? <div>
           <Form action="edit">
             {/* [x]: Make buttons more descriptive (use seed etc.) */}
             <button type="submit">Seed</button>
@@ -154,7 +145,7 @@ export default function File() {
           >
             <button type="submit">Delete</button>
           </Form>
-        </div>
+        </div> : null}
       </div>
     </div>
   );

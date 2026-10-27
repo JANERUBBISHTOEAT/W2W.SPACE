@@ -1,8 +1,7 @@
-import type { LinksFunction } from "@remix-run/node";
 import { ActionFunctionArgs, json } from "@remix-run/node";
 import { useActionData, useNavigation, useSubmit } from "@remix-run/react";
 import { useEffect, useRef, useState, useCallback } from "react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import { toast } from "sonner";
 
 interface ActionData {
@@ -36,7 +35,6 @@ export default function TextEditor() {
   );
   const [isSaving, setIsSaving] = useState(false);
   const actionData = useActionData<ActionData>();
-  const editorRef = useRef<unknown>(null);
 
   const handleSave = useCallback(() => {
     setIsSaving(true);
@@ -46,7 +44,12 @@ export default function TextEditor() {
     submit(formData, { method: "post" });
   }, [content, submit]);
 
-  const shownActionDataRef = useRef<typeof actionData>(null);
+  const handleSaveRef = useRef(handleSave);
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
+  const shownActionDataRef = useRef<typeof actionData | null>(null);
   useEffect(() => {
     if (!actionData?.success) return;
     if (shownActionDataRef.current === actionData) return;
@@ -55,11 +58,10 @@ export default function TextEditor() {
     toast.success(actionData.message || "Saved successfully");
   }, [actionData]);
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
-    editorRef.current = editor;
+  const handleEditorDidMount: OnMount = (editor, monaco) => {
     try {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-        handleSave();
+        handleSaveRef.current();
       });
 
       monaco.editor.defineTheme("customTheme", {

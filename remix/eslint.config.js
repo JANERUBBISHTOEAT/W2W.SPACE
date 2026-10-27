@@ -13,6 +13,6 @@ const compat = new FlatCompat({
 const legacyConfig = require("./.eslintrc.cjs");
 
 export default [
-  { ignores: ["node_modules/", "build/", ".cache/", ".env"] },
+  { ignores: ["node_modules/", "build/", ".cache/", ".env", "public/webtorrent.min.js"] },
   ...compat.config(legacyConfig),
 ];

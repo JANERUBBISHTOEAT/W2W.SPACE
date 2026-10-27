@@ -45,7 +45,7 @@ services:
   # Remix fullstack application
   remix:
     # build: .
-    image: zheyuanwei/w2w
+    image: ${W2W_IMAGE:-zheyuanwei/w2w:latest}
     container_name: remix
     restart: always
     logging:
@@ -58,8 +58,11 @@ services:
       - VIRTUAL_PORT=${VIRTUAL_PORT}
       - LETSENCRYPT_HOST=${LETSENCRYPT_HOST}
       - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL}
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
+      - NODE_ENV=production
+      - SESSION_SECRET=${SESSION_SECRET:?Set a unique SESSION_SECRET of at least 32 characters}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - REDIS_HOST=${REDIS_HOST:-redis}
+      - REDIS_PORT=${REDIS_PORT:-6379}
     depends_on:
       - redis
     ports:

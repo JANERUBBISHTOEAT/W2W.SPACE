@@ -1,120 +1,123 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Automated Deployment Script for Remix Application
-# Deploys via Docker Hub to production server
-# Includes detailed timing to record total time and time spent on each step
+# Publishing and server changes require separate explicit invocations.
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+action=${1:-help}
+image_repository=${W2W_IMAGE_REPOSITORY:-zheyuanwei/w2w}
+deploy_target=${DEPLOY_TARGET:-zheyuan_wei2003@34.130.69.135}
 
-set -e  # Exit on error
+fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
+usage() {
+  cat <<'EOF'
+Usage: ./deploy-auto.sh verify|build|publish|release|rollback
+  verify   Require a clean checkout; install, typecheck, lint, test and build.
+  build    Run verify, then build/load the linux/amd64 image tagged by full HEAD.
+  publish  Push the verified local image; print its immutable registry digest.
+  release  Deploy RELEASE_IMAGE=repository@sha256:... to confirmed DEPLOY_DIR.
+  rollback Restore RELEASE_RECORD from a previous deployment on that server.
 
-# Color output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
-# Global variables
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVER="zheyuan_wei2003@34.130.69.135"
-IMAGE_NAME="zheyuanwei/w2w:latest"
-
-# Step counter
-STEP=0
-declare -A STEP_TIMES
-
-# Timing functions
-start_time=$(date +%s)
-
-step_start() {
-    STEP=$((STEP + 1))
-    step_name=$1
-    step_start_time=$(date +%s)
-    echo -e "${BLUE}[Step $STEP]${NC} ${CYAN}$step_name${NC}..."
+release/rollback require W2W_RELEASE_APPROVED=1 after operator coordination.
+DEPLOY_DIR must be the discovered absolute directory containing Compose and .env.
+release also requires RELEASE_HEALTH_URL=https://<confirmed-domain>/health.
+No SSH keys, host trust, bot services, proxy or Redis upgrades are managed here.
+See docs/RELEASE.md before publishing or changing a server.
+EOF
 }
 
-step_end() {
-    step_end_time=$(date +%s)
-    elapsed=$((step_end_time - step_start_time))
-    STEP_TIMES[$STEP]=$elapsed
-    printf "  ${GREEN}✓ Done${NC} (Elapsed: ${YELLOW}${elapsed}s${NC})\n\n"
+clean_revision() {
+  cd "$repo_dir"
+  [[ -z $(git status --porcelain=v1 --untracked-files=normal) ]] ||
+    fail 'Commit/review the intended release changes first; the checkout must be clean.'
+  revision=$(git rev-parse --verify 'HEAD^{commit}')
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail 'Expected a full Git commit SHA.'
+  [[ $image_repository =~ ^[a-z0-9][a-z0-9./:_-]*$ ]] || fail 'Invalid image repository.'
+  image="$image_repository:$revision"
+  verification_file=$(git rev-parse --git-path w2w-release-verified)
 }
 
-step_error() {
-    step_end_time=$(date +%s)
-    elapsed=$((step_end_time - step_start_time))
-    printf "  ${RED}✗ Failed${NC} (Elapsed: ${elapsed}s)\n"
-    exit 1
+verify() {
+  clean_revision
+  local expected_revision=$revision
+  rm -f -- "$verification_file"
+  (
+    cd "$repo_dir/remix"
+    npm ci --no-audit --no-fund --strict-ssl=true --engine-strict
+    npm run typecheck
+    npm run lint
+    npm run build
+    npm test
+  )
+  clean_revision
+  [[ $revision == "$expected_revision" ]] || fail 'HEAD changed during validation.'
+  printf '%s\n' "$revision" > "$verification_file"
+  printf 'Verified commit: %s\n' "$revision"
 }
 
-print_header() {
-    echo -e "${CYAN}======================================${NC}"
-    echo -e "${CYAN}    Automated Deployment Script v1.0${NC}"
-    echo -e "${CYAN}======================================${NC}"
-    echo -e "Start Time: ${GREEN}$(date '+%Y-%m-%d %H:%M:%S')${NC}"
-    echo -e "Image: ${YELLOW}$IMAGE_NAME${NC}"
-    echo -e "Server: ${YELLOW}$SERVER${NC}"
-    echo ""
+require_verified() {
+  clean_revision
+  [[ -f $verification_file ]] && [[ $(cat "$verification_file") == "$revision" ]] ||
+    fail 'Run verify/build successfully for this exact clean commit first.'
 }
 
-print_footer() {
-    end_time=$(date +%s)
-    total_time=$((end_time - start_time))
+require_coordinated_release() {
+  [[ ${W2W_RELEASE_APPROVED:-} == 1 ]] || fail 'Coordinate the server change, then set W2W_RELEASE_APPROVED=1.'
+  [[ ${DEPLOY_DIR:-} == /* ]] || fail 'Set DEPLOY_DIR to the discovered absolute Compose directory.'
+  [[ $deploy_target =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || fail 'Invalid DEPLOY_TARGET.'
+}
 
-    echo ""
-    echo -e "${CYAN}======================================${NC}"
-    echo -e "${GREEN}    Deployment Complete!${NC}"
-    echo -e "${CYAN}======================================${NC}"
-    echo -e "End Time: ${GREEN}$(date '+%Y-%m-%d %H:%M:%S')${NC}"
-    echo ""
-    echo -e "${YELLOW}Time Statistics:${NC}"
-    for step in $(seq 1 $STEP); do
-        printf "  Step $step: ${GREEN}%ds${NC}\n" "${STEP_TIMES[$step]}"
+run_remote() {
+  local command='env W2W_RELEASE_APPROVED=1 bash -s --' argument quoted
+  for argument in "$@"; do
+    printf -v quoted '%q' "$argument"
+    command+=" $quoted"
+  done
+  # Keep existing authentication and host-key verification intact.
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$deploy_target" "$command" < "$repo_dir/remix/update.sh"
+}
+
+case "$action" in
+  help|-h|--help) usage ;;
+  verify) verify ;;
+  build)
+    verify
+    build_options=(--platform linux/amd64 --load --build-arg "APP_REVISION=$revision"
+      --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY)
+    if [[ -n ${NODE_EXTRA_CA_CERTS:-} && -f $NODE_EXTRA_CA_CERTS ]]; then
+      build_options+=(--secret "id=proxy_ca,src=$NODE_EXTRA_CA_CERTS")
+    fi
+    docker buildx build "${build_options[@]}" -f "$repo_dir/remix/dockerfile" -t "$image" "$repo_dir/remix"
+    printf 'Built local image: %s\n' "$image"
+    ;;
+  publish)
+    require_verified
+    [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$revision" ]] ||
+      fail 'The local image revision does not match the verified commit.'
+    docker push "$image"
+    printf 'Published digest(s); use the matching repository@sha256 reference for release:\n'
+    docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$image"
+    ;;
+  release)
+    require_coordinated_release
+    require_verified
+    [[ ${RELEASE_IMAGE:-} =~ ^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$ ]] || fail 'RELEASE_IMAGE must be an immutable registry digest.'
+    [[ ${RELEASE_HEALTH_URL:-} == https://* ]] || fail 'Set the confirmed HTTPS RELEASE_HEALTH_URL.'
+    run_remote release "$DEPLOY_DIR" "$RELEASE_IMAGE" "$revision"
+    for attempt in {1..12}; do
+      if curl --proto '=https' --fail --silent --show-error --max-time 10 "$RELEASE_HEALTH_URL" |
+        node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{const j=JSON.parse(s);if(j.status!=="ok"||j.version!==process.argv[1])process.exit(1)}catch{process.exit(1)}})' "$revision"; then
+        printf 'Release verified through HTTPS: %s\n' "$revision"
+        exit 0
+      fi
+      sleep 2
     done
-    echo ""
-    printf "  ${YELLOW}Total Time: ${GREEN}%ds${NC} (~ %dm%ds)\n" "$total_time" $((total_time / 60)) $((total_time % 60))
-    echo ""
-}
-
-print_header
-
-# Step 1: Build and push Docker image
-step_start "Building Docker image (amd64)"
-cd "$SCRIPT_DIR/remix"
-if docker buildx build --platform=linux/amd64 -t "$IMAGE_NAME" --push . > /tmp/deploy-build.log 2>&1; then
-    step_end
-else
-    echo -e "${RED}Build failed, check logs: /tmp/deploy-build.log${NC}"
-    step_error
-fi
-
-# Step 2: Update server
-step_start "SSH connection and pull latest image"
-if ssh "$SERVER" "cd ~/CSCC09-24F-Project/remix && docker-compose pull" > /tmp/deploy-pull.log 2>&1; then
-    step_end
-else
-    echo -e "${RED}Pull failed${NC}"
-    step_error
-fi
-
-step_start "Stopping old containers"
-ssh "$SERVER" "cd ~/CSCC09-24F-Project/remix && docker-compose down" > /tmp/deploy-down.log 2>&1
-step_end
-
-step_start "Starting new containers"
-if ssh "$SERVER" "cd ~/CSCC09-24F-Project/remix && docker-compose up -d" > /tmp/deploy-up.log 2>&1; then
-    step_end
-else
-    echo -e "${RED}Startup failed${NC}"
-    step_error
-fi
-
-step_start "Verifying container status"
-ssh "$SERVER" "docker ps" | grep -E "remix|redis|nginx-proxy|nginx-proxy-acme"
-step_end
-
-# Display detailed container status
-echo -e "${CYAN}Detailed Container Status:${NC}"
-ssh "$SERVER" "docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'"
-
-print_footer
+    fail 'External health/version verification failed. The local app passed; coordinate rollback using the printed release record.'
+    ;;
+  rollback)
+    require_coordinated_release
+    [[ ${RELEASE_RECORD:-} == /* ]] || fail 'Set RELEASE_RECORD to the exact record directory printed by release.'
+    run_remote rollback "$DEPLOY_DIR" "$RELEASE_RECORD"
+    printf 'Rollback completed locally on the server. Verify public HTTPS and normal user flow before closing the incident.\n'
+    ;;
+  *) usage >&2; exit 2 ;;
+esac

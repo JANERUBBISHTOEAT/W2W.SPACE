@@ -4,9 +4,9 @@ import orderBy from "lodash/orderBy";
 import invariant from "tiny-invariant";
 import HashMap from "./hashmap.server";
 import Redis from "ioredis";
-import dotenv from "dotenv";
+import { config } from "dotenv";
 
-dotenv.config();
+config();
 console.log("redis env:", process.env.REDIS_HOST, process.env.REDIS_PORT);
 const redis = new Redis({
   host: process.env.REDIS_HOST || "localhost",
@@ -270,6 +270,25 @@ export async function getFileByFileId(fileId: string) {
   return fileService.getByFileId(fileId);
 }
 
+// A receiver can retain the shared token after the original sender removes
+// their history entry. Resolve a surviving record without overwriting the map.
+export async function getFileByToken(token: string): Promise<FileRecord | null> {
+  const mapping = await HashMap.getBoth(token);
+  if (mapping.type !== "file" || mapping.status === "deleted") return null;
+  if (mapping.fileId) {
+    const original = await fileService.getByFileId(mapping.fileId);
+    if (original?.token === token) return original;
+  }
+  for (const key of await redis.keys("user:*:files")) {
+    const records = await redis.hgetall(key);
+    for (const raw of Object.values(records)) {
+      const file: FileRecord = JSON.parse(raw);
+      if (file.token === token) return file;
+    }
+  }
+  return null;
+}
+
 export async function updateFile(
   userId: string,
   fileId: string,
@@ -289,7 +308,7 @@ export async function updateFile(
       const notesMatch = (duplicateFile.notes ?? "") === (updates.notes ?? "");
       if (notesMatch && allowDelete) {
         console.log("Deleting duplicate file:", fileId);
-        fileService.destroy(userId, fileId);
+        await fileService.destroy(userId, fileId);
         console.log(
           "Duplicate file found, returning existing:",
           duplicateFile.id,
@@ -335,9 +354,10 @@ export async function getFileUndo(
 
 export async function restoreFileFromUndo(
   fileId: string,
+  requestingUserId: string,
 ): Promise<FileRecord | null> {
   const data = await getFileUndo(fileId);
-  if (!data) return null;
+  if (!data || data.userId !== requestingUserId) return null;
   const { userId, file } = data;
   await redis.hset(userFilesKey(userId), file.id, JSON.stringify(file));
   if (file.token) {

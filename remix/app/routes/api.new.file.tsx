@@ -1,13 +1,9 @@
 import { ActionFunctionArgs, redirect } from "@remix-run/node";
 import { createEmptyFile } from "~/utils/data.server";
-import { getUserSession, getVisitorSession } from "~/utils/session.server";
+import { requireSessionIdentity } from "~/utils/session.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  console.log("User:", user);
-  console.log("Visitor:", visitor);
-  const sub = user?.sub || visitor?.sub;
+  const { sub } = await requireSessionIdentity(request);
   const newFile = await createEmptyFile(sub, false);
   const formData = await request.formData();
 

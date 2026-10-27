@@ -1,16 +1,32 @@
-ARG TARGETPLATFORM
-
-FROM node:lts-slim AS build
-
-RUN mkdir -p /app
+FROM node:24.22.1-bookworm-slim AS build
 WORKDIR /app
-COPY . /app
-RUN npm install
-RUN npm run build
 
-FROM node:lts-slim AS main
+# Cache the frozen dependency installation separately from application changes.
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -f /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    npm ci --no-audit --no-fund --strict-ssl=true
+COPY . .
+RUN NODE_ENV=production npm run build \
+    && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
+
+FROM node:24.22.1-bookworm-slim AS main
+ARG APP_REVISION=development
+LABEL org.opencontainers.image.revision=$APP_REVISION
+ENV NODE_ENV=production \
+    APP_REVISION=$APP_REVISION \
+    HOST=0.0.0.0 \
+    PORT=3000
 WORKDIR /app
-COPY --from=build /app /app
+
+COPY --from=build --chown=node:node /app/package.json /app/package-lock.json ./
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/build ./build
+COPY --from=build --chown=node:node /app/public ./public
+
+USER node
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD node -e 'fetch("http://127.0.0.1:3000/health", {signal: AbortSignal.timeout(4000)}).then(r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))'
 
-CMD ["npm","run","start"]
+CMD ["npm", "run", "start"]

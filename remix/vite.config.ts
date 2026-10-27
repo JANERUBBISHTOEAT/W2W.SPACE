@@ -2,9 +2,9 @@ import { vitePlugin as remix } from "@remix-run/dev";
 import { fileURLToPath } from "url";
 import { defineConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
-import dotenv from "dotenv";
+import { config } from "dotenv";
 
-dotenv.config();
+config();
 const isProduction = process.env.NODE_ENV === "production";
 
 export default defineConfig({

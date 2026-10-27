@@ -1,5 +1,8 @@
-import type { LinksFunction } from "@remix-run/node";
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import type {
+  ActionFunctionArgs,
+  LinksFunction,
+  LoaderFunctionArgs,
+} from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import {
   useActionData,
@@ -8,18 +11,17 @@ import {
   useSubmit,
 } from "@remix-run/react";
 import { useEffect, useRef, useState, useCallback } from "react";
-import MonacoEditor from "@monaco-editor/react";
+import MonacoEditor, { type OnMount } from "@monaco-editor/react";
+import type { editor } from "monaco-editor";
 import { toast } from "sonner";
 import invariant from "tiny-invariant";
 import type { TextRecord } from "~/utils/text.server";
 import {
   getText,
   getTextByTextId,
-  getUserIdForTextId,
   updateText,
   updateTextByTextId,
   deleteText,
-  deleteTextByTextId,
   saveTextUndo,
 } from "~/utils/text.server";
 import { getUserSession, getVisitorSession } from "~/utils/session.server";
@@ -71,8 +73,6 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     lastAccessedAt: now,
     accessCount: (text.accessCount || 0) + 1,
     // Explicitly do NOT update lastEditedAt here
-    // Set owner based on current user's ownership
-    owner: isOwner,
   };
 
   // Update access statistics using the appropriate method
@@ -80,7 +80,7 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
     if (userId) {
       try {
         await updateText(userId, params.textId, updatedText);
-      } catch (error) {
+      } catch {
         // If user is not owner, use global update
         await updateTextByTextId(params.textId, updatedText);
       }
@@ -94,7 +94,10 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
   }
 
   // Re-fetch the latest text data to ensure updateCount is current
-  let latestText = updatedText;
+  let latestText: TextRecord & { owner: boolean } = {
+    ...updatedText,
+    owner: isOwner,
+  };
   try {
     if (userId) {
       const fetched = await getText(userId, params.textId);
@@ -217,33 +220,26 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
   }
 
   if (intent === "delete") {
-    // Check if user is owner before allowing delete
-    // Get the text to check owner status
-    let text = null;
-    if (userId) {
-      text = await getText(userId, params.textId);
-    }
-    if (!text) {
-      text = await getTextByTextId(params.textId);
+    if (!userId) {
+      return json(
+        { success: false, message: "Only the owner can delete this text" },
+        { status: 403 },
+      );
     }
 
-    // Only allow delete if user is the owner
-    // If owner field exists and is false, deny delete
-    if (text && "owner" in text && text.owner === false) {
-      return json({
-        success: false,
-        message: "Only the owner can delete this text",
-      });
+    // Ownership is the current session's collection membership, not a saved
+    // display flag or knowledge of the public sharing URL.
+    const text = await getText(userId, params.textId);
+    if (!text) {
+      return json(
+        { success: false, message: "Only the owner can delete this text" },
+        { status: 403 },
+      );
     }
 
     // Save undo then delete
-    const undoUserId = userId || (await getUserIdForTextId(params.textId));
-    if (text && undoUserId) await saveTextUndo(undoUserId, params.textId, text);
-    if (userId) {
-      await deleteText(userId, params.textId);
-    } else {
-      await deleteTextByTextId(params.textId);
-    }
+    await saveTextUndo(userId, params.textId, text);
+    await deleteText(userId, params.textId);
     return redirect(
       `/?message=Deleted&undoId=${encodeURIComponent(
         params.textId,
@@ -259,7 +255,7 @@ export default function TextEditor() {
   const navigation = useNavigation();
   const { text } = useLoaderData<typeof loader>();
   const [content, setContent] = useState(
-    text?.content || "# Welcome\n\nStart typing...",
+    text.content ?? "# Welcome\n\nStart typing...",
   );
   const [language, setLanguage] = useState(text?.language || "markdown");
   const [title, setTitle] = useState(
@@ -268,7 +264,7 @@ export default function TextEditor() {
 
   // Track last update to prevent overwriting local edits
   const lastUpdateCountRef = useRef(text?.updateCount || 0);
-  const isInitialMount = useRef(true);
+  const currentTextIdRef = useRef(text.id);
 
   // Update content, title, and language when text changes (from server)
   // But only if it's a new update (not the same version)
@@ -277,24 +273,23 @@ export default function TextEditor() {
       const currentUpdateCount = text.updateCount || 0;
       const lastUpdateCount = lastUpdateCountRef.current;
 
-      // Only update if it's a new version (higher updateCount)
-      if (currentUpdateCount > lastUpdateCount) {
-        setContent(text.content || "# Welcome\n\nStart typing...");
+      // Switching documents must reset the editor even if its revision is lower.
+      // For the same document, preserve local edits until a newer version arrives.
+      if (
+        text.id !== currentTextIdRef.current ||
+        currentUpdateCount > lastUpdateCount
+      ) {
+        setContent(text.content ?? "# Welcome\n\nStart typing...");
         setLanguage(text.language || "markdown");
         setTitle(text.title || text.token || "Untitled Text");
+        currentTextIdRef.current = text.id;
         lastUpdateCountRef.current = currentUpdateCount;
-      } else if (isInitialMount.current) {
-        // Only set initial values once on mount
-        isInitialMount.current = false;
-        setContent(text.content || "# Welcome\n\nStart typing...");
-        setLanguage(text.language || "markdown");
-        setTitle(text.title || text.token || "Untitled Text");
       }
     }
   }, [text]);
   const [isSaving, setIsSaving] = useState(false);
   const actionData = useActionData<ActionData>();
-  const editorRef = useRef<unknown>(null);
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 
   const handleSave = useCallback(() => {
     setIsSaving(true);
@@ -321,7 +316,7 @@ export default function TextEditor() {
     });
   }, [submit]);
 
-  const shownActionDataRef = useRef<typeof actionData>(null);
+  const shownActionDataRef = useRef<typeof actionData>(undefined);
   useEffect(() => {
     if (!actionData) return;
     if (shownActionDataRef.current === actionData) return;
@@ -350,7 +345,7 @@ export default function TextEditor() {
     }
   }, [actionData, text?.token]);
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+  const handleEditorDidMount: OnMount = (editor) => {
     editorRef.current = editor;
   };
 
@@ -365,11 +360,13 @@ export default function TextEditor() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         // Only prevent if focused on the page (not in input fields outside editor)
-        const target = e.target as HTMLElement;
+        const target = e.target;
         const isTitleInput =
-          target.tagName === "INPUT" &&
+          target instanceof HTMLInputElement &&
           target.getAttribute("placeholder") === "Untitled Text";
-        const isTokenInput = target.getAttribute("aria-label") === "Token";
+        const isTokenInput =
+          target instanceof HTMLElement &&
+          target.getAttribute("aria-label") === "Token";
 
         // Don't handle if typing in title/token inputs
         if (!isTitleInput && !isTokenInput) {
@@ -378,8 +375,7 @@ export default function TextEditor() {
           console.log("Ctrl+S pressed, saving from editor");
 
           // Get latest content directly from Monaco editor instance
-          const editor = editorRef.current as any;
-          const currentContent = editor?.getValue() || content;
+          const currentContent = editorRef.current?.getValue() ?? content;
 
           setIsSaving(true);
           const formData = new FormData();
@@ -398,7 +394,7 @@ export default function TextEditor() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [language, title, text.updateCount, submit]); // Remove content dependency, get it from editor
+  }, [content, language, title, text.updateCount, submit]);
 
   const copyToken = async () => {
     if (text?.token) {
@@ -490,7 +486,7 @@ export default function TextEditor() {
         {typeof window !== "undefined" ? (
           <MonacoEditor
             height="100%"
-            defaultLanguage={language}
+            language={language}
             value={content}
             theme="vs"
             onChange={handleEditorChange}

@@ -1,168 +1,154 @@
-import dotenv from "dotenv";
+import { createHash } from "node:crypto";
+import { config } from "dotenv";
 import Redis from "ioredis";
 
-dotenv.config();
-console.log("redis env:", process.env.REDIS_HOST, process.env.REDIS_PORT);
+config();
 const redis = new Redis({
   host: process.env.REDIS_HOST || "localhost",
   port: parseInt(process.env.REDIS_PORT || "6379", 10),
 });
 
+const TOKEN_MAP = "unifiedTokenMap";
+type TokenType = "file" | "text";
+type TokenRecord = {
+  type: TokenType;
+  id?: string;
+  magnet?: string;
+  status?: string;
+};
+
+function parseTokenRecord(raw: string | null): TokenRecord | null {
+  if (!raw) return null;
+  try {
+    const record: unknown = JSON.parse(raw);
+    if (!record || typeof record !== "object" || !("type" in record)) {
+      return null;
+    }
+    if (record.type !== "file" && record.type !== "text") return null;
+    return {
+      type: record.type,
+      id: "id" in record && typeof record.id === "string" ? record.id : undefined,
+      magnet:
+        "magnet" in record && typeof record.magnet === "string"
+          ? record.magnet
+          : undefined,
+      status:
+        "status" in record && typeof record.status === "string"
+          ? record.status
+          : "OK",
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default class HashMap {
   map: Map<number, string>;
-  private static crypto: typeof import("crypto") | null = null;
 
   constructor() {
     this.map = new Map();
   }
 
-  static async genKey(str: string): Promise<string> {
-    // [x]: Check collision
-    if (!this.crypto) this.crypto = await import("crypto");
+  private static async reserveToken(
+    token: string,
+    id: string,
+    type: TokenType,
+  ): Promise<boolean> {
+    const inserted = await redis.hsetnx(
+      TOKEN_MAP,
+      token,
+      JSON.stringify({ type, id, status: "OK" }),
+    );
+    if (inserted === 1) return true;
 
-    const maxRetries = 10;
-    let attempts: number = 0;
-    let token: number = -1;
-    let hash: string;
-    let token_len: number = 3;
-
-    while (attempts++ < maxRetries) {
-      // [x]: Make 6 a variable that increases when full
-      hash = this.crypto.createHash("md5").update(str).digest("hex");
-      token = parseInt(hash.slice(0, token_len), 16) % 10 ** token_len;
-
-      const record = await this.get(token.toString());
-      if (!record || record === str) {
-        // "===" for "not a collision"
-        console.log("magnet:", str, "has duplicate with:", record);
-        break;
-      } else {
-        console.warn("magnet:", str, "has collision with:", record);
-        token_len++;
-      }
-    }
-    if (attempts === maxRetries) {
-      console.error("genKey failed with attempts", attempts);
-      console.info(
-        "Redis health:",
-        ((await this.getKeysCnt()) || -1) / 10 ** 6
-      );
-      token = -1;
-    }
-
-    return token.toString().padStart(token_len, "0");
+    // Repeated creation/merge of the same record may reuse its token. A token
+    // belonging to another record (including a tombstone) is never overwritten.
+    const existing = parseTokenRecord(await redis.hget(TOKEN_MAP, token));
+    return (
+      existing?.type === type &&
+      existing.id === id &&
+      existing.status !== "deleted"
+    );
   }
 
-  static async set(
-    token: string,
-    fileId: string
-    // expiry: number = 60 * 60
-  ): Promise<void | null> {
-    console.info("Redis health:", ((await this.getKeysCnt()) || -1) / 10 ** 6);
-    if (!redis) return null;
-    await redis.hset(
-      "unifiedTokenMap",
-      token,
-      JSON.stringify({ type: "file", id: fileId, status: "OK" })
-    );
-    // await redis.expire("unifiedTokenMap", expiry);
+  static async genKey(id: string, type: TokenType = "file"): Promise<string> {
+    if (!id) throw new Error("A record ID is required to allocate a token");
+    // Keep the existing decimal token format and deterministic candidates so
+    // existing links and idempotent record merges remain compatible.
+    const hash = createHash("md5").update(id).digest("hex");
+    for (let length = 3; length <= 12; length++) {
+      const token = (parseInt(hash.slice(0, length), 16) % 10 ** length)
+        .toString()
+        .padStart(length, "0");
+      if (await this.reserveToken(token, id, type)) return token;
+    }
+    throw new Error("Unable to allocate a unique sharing token");
+  }
+
+  static async set(token: string, fileId: string): Promise<void> {
+    if (!(await this.reserveToken(token, fileId, "file"))) {
+      throw new Error("Sharing token already belongs to another record");
+    }
   }
 
   static async get(token: string): Promise<string | null> {
-    if (!redis) return null;
-    const data = await redis.hget("unifiedTokenMap", token);
-    if (data) {
-      const parsed = JSON.parse(data);
-      // For backward compatibility, return the full data structure
-      // This method is used by old code that expects magnet
-      if (parsed.type === "file") {
-        return parsed.magnet || parsed.id;
-      }
-    }
-    return null;
+    const record = parseTokenRecord(await redis.hget(TOKEN_MAP, token));
+    // Retain the legacy magnet return value when reading older file mappings.
+    return record?.type === "file" && record.status !== "deleted"
+      ? record.magnet || record.id || null
+      : null;
   }
 
-  static async getKeysCnt(): Promise<number | null> {
-    if (!redis) return null;
-    return await redis.hlen("unifiedTokenMap");
+  static async getKeysCnt(): Promise<number> {
+    return redis.hlen(TOKEN_MAP);
   }
 
-  static async del(token: string): Promise<void | null> {
-    if (!redis) return null;
-    await redis.hdel("unifiedTokenMap", token);
+  static async del(token: string): Promise<void> {
+    await redis.hdel(TOKEN_MAP, token);
   }
 
-  static async genToken(fileId: string): Promise<string | null> {
-    if (!redis || !fileId) return "";
-    const token_str = await HashMap.genKey(fileId);
-    await HashMap.set(token_str, fileId);
-    return token_str;
+  static async genToken(fileId: string): Promise<string> {
+    if (!fileId) return "";
+    return this.genKey(fileId, "file");
   }
 
   static async getFile(token: string): Promise<string | null> {
-    if (!redis) return null;
-    const data = await redis.hget("unifiedTokenMap", token);
-    if (data) {
-      const parsed = JSON.parse(data);
-      return parsed.type === "file" ? parsed.id : null;
-    }
-    return null;
+    const record = parseTokenRecord(await redis.hget(TOKEN_MAP, token));
+    return record?.type === "file" && record.status !== "deleted"
+      ? record.id || null
+      : null;
   }
 
-  // Unified token storage with type field
-  static async setText(token: string, textId: string): Promise<void | null> {
-    if (!redis) return null;
-    await redis.hset(
-      "unifiedTokenMap",
-      token,
-      JSON.stringify({ type: "text", id: textId, status: "OK" })
-    );
+  static async setText(token: string, textId: string): Promise<void> {
+    if (!(await this.reserveToken(token, textId, "text"))) {
+      throw new Error("Sharing token already belongs to another record");
+    }
   }
 
   static async getText(token: string): Promise<string | null> {
-    if (!redis) return null;
-    const data = await redis.hget("unifiedTokenMap", token);
-    if (data) {
-      const parsed = JSON.parse(data);
-      return parsed.type === "text" ? parsed.id : null;
-    }
-    return null;
+    const record = parseTokenRecord(await redis.hget(TOKEN_MAP, token));
+    return record?.type === "text" && record.status !== "deleted"
+      ? record.id || null
+      : null;
   }
 
-  // Get both token mappings simultaneously
   static async getBoth(token: string): Promise<{
     textId: string | null;
     fileId: string | null;
-    type: string | null;
+    type: TokenType | null;
     status: string | null;
   }> {
-    if (!redis) return { textId: null, fileId: null, type: null, status: null };
-    const data = await redis.hget("unifiedTokenMap", token);
-    if (!data) return { textId: null, fileId: null, type: null, status: null };
-
-    const parsed = JSON.parse(data);
-    if (parsed.type === "text") {
-      return {
-        textId: parsed.id,
-        fileId: null,
-        type: "text",
-        status: parsed.status || "OK",
-      };
-    } else if (parsed.type === "file") {
-      return {
-        textId: null,
-        fileId: parsed.id,
-        type: "file",
-        status: parsed.status || "OK",
-      };
-    }
-    return { textId: null, fileId: null, type: null, status: null };
+    const record = parseTokenRecord(await redis.hget(TOKEN_MAP, token));
+    return {
+      textId: record?.type === "text" ? record.id || null : null,
+      fileId: record?.type === "file" ? record.id || null : null,
+      type: record?.type || null,
+      status: record?.status || null,
+    };
   }
 
-  static async generateTextToken(textId: string): Promise<string | null> {
-    if (!redis || !textId) return "";
-    const token_str = await HashMap.genKey(textId);
-    await HashMap.setText(token_str, textId);
-    return token_str;
+  static async generateTextToken(textId: string): Promise<string> {
+    if (!textId) return "";
+    return this.genKey(textId, "text");
   }
 }

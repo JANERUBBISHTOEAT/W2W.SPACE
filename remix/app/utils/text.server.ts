@@ -2,9 +2,9 @@ import { matchSorter } from "match-sorter";
 import orderBy from "lodash/orderBy";
 import invariant from "tiny-invariant";
 import Redis from "ioredis";
-import dotenv from "dotenv";
+import { config } from "dotenv";
 
-dotenv.config();
+config();
 const redis = new Redis({
   host: process.env.REDIS_HOST || "localhost",
   port: parseInt(process.env.REDIS_PORT || "6379", 10),
@@ -316,10 +316,11 @@ export async function getTextUndo(
 }
 
 export async function restoreTextFromUndo(
-  textId: string
+  textId: string,
+  requestingUserId: string,
 ): Promise<TextRecord | null> {
   const data = await getTextUndo(textId);
-  if (!data) return null;
+  if (!data || data.userId !== requestingUserId) return null;
   const { userId, text } = data;
   await redis.hset(userTextsKey(userId), text.id, JSON.stringify(text));
   if (text.token) {

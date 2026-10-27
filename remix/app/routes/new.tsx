@@ -1,24 +1,13 @@
-import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import { json, redirect } from "@remix-run/node";
-import { Form, useActionData, useLoaderData } from "@remix-run/react";
-import { getUserSession, getVisitorSession } from "~/utils/session.server";
-
-export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  return json({
-    loggedIn: !!user,
-    userId: user?.sub || visitor?.sub,
-  });
-};
+import type { ActionFunctionArgs } from "@remix-run/node";
+import { redirect } from "@remix-run/node";
+import { Form } from "@remix-run/react";
+import { requireSessionIdentity } from "~/utils/session.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const type = formData.get("type") as string;
 
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  const sub = user?.sub || visitor?.sub;
+  const { sub } = await requireSessionIdentity(request);
 
   if (type === "text") {
     const { createEmptyText } = await import("~/utils/text.server");
@@ -33,7 +22,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 export default function New() {
-  const { loggedIn, userId } = useLoaderData<typeof loader>();
 
   return (
     <div
@@ -46,8 +34,8 @@ export default function New() {
     >
       <Form method="post" style={{ flex: 1, display: "contents" }}>
         <input type="hidden" name="type" value="file" />
-        <div
-          onClick={(e) => e.currentTarget.closest("form")?.requestSubmit()}
+        <button
+          type="submit"
           style={{
             flex: 1,
             display: "flex",
@@ -74,13 +62,13 @@ export default function New() {
         >
           <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>📁</div>
           <div>New File</div>
-        </div>
+        </button>
       </Form>
 
       <Form method="post" style={{ flex: 1, display: "contents" }}>
         <input type="hidden" name="type" value="text" />
-        <div
-          onClick={(e) => e.currentTarget.closest("form")?.requestSubmit()}
+        <button
+          type="submit"
           style={{
             flex: 1,
             display: "flex",
@@ -107,7 +95,7 @@ export default function New() {
         >
           <div style={{ fontSize: "5rem", marginBottom: "1rem" }}>✏️</div>
           <div>New Text</div>
-        </div>
+        </button>
       </Form>
     </div>
   );

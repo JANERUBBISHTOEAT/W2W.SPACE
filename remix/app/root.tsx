@@ -16,12 +16,14 @@ import {
 } from "@remix-run/react";
 import { Toaster } from "sonner";
 import "sonner/dist/styles.css";
+import { randomUUID } from "node:crypto";
 import { createEmptyFile, getFiles } from "~/utils/data.server";
 import {
   commitSession,
   getSession,
   getUserSession,
   getVisitorSession,
+  requireSessionIdentity,
 } from "./utils/session.server";
 
 export const links: LinksFunction = () => [
@@ -36,10 +38,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getUserSession(request);
 
   // Check and cleanup expired records
-  const { cleanupExpiredRecords, enforceTokenLimit } = await import(
+  const { cleanupExpiredRecords } = await import(
     "~/utils/cleanup.server"
   );
-  await Promise.all([cleanupExpiredRecords(), enforceTokenLimit()]);
+  await cleanupExpiredRecords();
 
   if (!user) {
     // visitor, check if has session
@@ -76,7 +78,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     } else {
       // no session, create with a random id session
       const session = await getSession(request);
-      const rid = Math.random().toString(36).substring(2, 9);
+      const rid = randomUUID();
       console.log("New visitor session:", rid);
       session.set("visitor", { sub: rid });
       return json(
@@ -115,9 +117,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const type = formData.get("type") as string;
 
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  const sub = user?.sub || visitor?.sub;
+  const { sub } = await requireSessionIdentity(request);
 
   if (type === "text") {
     const { createEmptyText } = await import("~/utils/text.server");
@@ -187,7 +187,7 @@ export default function App() {
           <nav>
             {allItems && allItems.length > 0 ? (
               <ul>
-                {allItems.map((item: any) => {
+                {allItems.map((item) => {
                   // Use itemType (set in loader); don't use filename - new empty file has no filename and was wrongly shown as text
                   const isFile = item.itemType === "file";
                   const file = isFile ? item : null;
@@ -256,7 +256,7 @@ export default function App() {
                         </NavLink>
                       </li>
                     );
-                  } else {
+                  } else if (text) {
                     // Handle text
                     const lastDate = text.lastEditedAt || text.lastAccessedAt;
                     const daysSinceEdit = lastDate

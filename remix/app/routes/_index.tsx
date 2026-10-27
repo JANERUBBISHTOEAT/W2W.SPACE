@@ -1,19 +1,16 @@
 import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
-import { ActionFunctionArgs, json, LoaderFunction } from "@remix-run/node";
-import {
-  useFetcher,
-  useLoaderData,
-  useLocation,
-  useNavigate,
-} from "@remix-run/react";
-import dotenv from "dotenv";
-import { jwtDecode } from "jwt-decode";
-import { useEffect, useRef, useState } from "react";
-import invariant from "tiny-invariant";
+import type { CredentialResponse } from "@react-oauth/google";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { useFetcher, useLoaderData, useLocation, useNavigate } from "@remix-run/react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { mergeFiles } from "~/utils/data.server";
+import { getFileByToken, mergeFiles } from "~/utils/data.server";
+import { mergeTexts } from "~/utils/text.server";
 import { prettyBytes } from "~/utils/functions";
 import HashMap from "~/utils/hashmap.server";
+import { verifyGoogleCredential } from "~/utils/google-auth.server";
+import type { SessionIdentity } from "~/utils/session.server";
 import {
   commitSession,
   destroySession,
@@ -21,629 +18,333 @@ import {
   getUserSession,
   getVisitorSession,
 } from "~/utils/session.server";
+import { loadTorrentClient } from "~/utils/webtorrent.client";
+import type { BrowserTorrentFile } from "~/utils/webtorrent.client";
 
-if (typeof window === "undefined") {
-  // Server-side
-  dotenv.config();
+interface HomeActionData {
+  user?: SessionIdentity | null;
+  error?: string;
+  intent?: "acquireMagnet" | "acquireToken";
+  type?: "text" | "file" | null;
+  textId?: string;
+  fileId?: string;
+  token?: string;
+  magnet?: string | null;
 }
 
-export const loader: LoaderFunction = async ({ request }) => {
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const user = await getUserSession(request);
-  return json({ googleClientId: process.env.GOOGLE_CLIENT_ID, user: user });
+  return json({ googleClientId: process.env.GOOGLE_CLIENT_ID || "", user: user ?? null });
 };
 
-export const action = async ({ params, request }: ActionFunctionArgs) => {
-  console.log("Action params:", params);
-
-  // Check intent
+export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
-  const formObj = Object.fromEntries(formData);
-  console.log("formObj:", formObj);
-  invariant(formObj.intent, "No intent found");
+  const intent = formData.get("intent");
 
-  // * Is OAuth callback
-  if (formObj.intent === "OAuthCallback") {
-    console.log("intent: OAuthCallback");
-    const credential = formObj.credential as string;
-    const decoded = jwtDecode(credential);
-    console.log("Decoded:", decoded);
-
-    // Login user
-    const session = await getSession(request);
-    session.set("user", decoded);
-
-    // Merge visitor session
-    const visitor = await getVisitorSession(request);
-    if (visitor) {
-      if (decoded.sub && visitor.sub) {
-        mergeFiles(decoded.sub, visitor.sub);
-      } else {
-        console.error("User ID or Visitor ID is undefined");
+  if (intent === "OAuthCallback") {
+    // Prevent login CSRF: a cross-site form must not sign another browser in.
+    // Compare hosts because HTTPS may terminate at the deployment proxy while
+    // Remix receives HTTP internally. Never accept an absent/opaque Origin.
+    const origin = request.headers.get("Origin");
+    let sameHost = false;
+    try {
+      if (origin) {
+        const originUrl = new URL(origin);
+        sameHost = (originUrl.protocol === "http:" || originUrl.protocol === "https:") && originUrl.host === new URL(request.url).host;
       }
+    } catch {
+      // Invalid Origin is rejected below.
+    }
+    if (!sameHost || request.headers.get("Sec-Fetch-Site") === "cross-site") {
+      return json({ error: "Login must originate from this site" }, { status: 403 });
+    }
+    const audience = process.env.GOOGLE_CLIENT_ID;
+    if (!audience) {
+      return json({ error: "Google login is not configured" }, { status: 503 });
+    }
+    const credential = formData.get("credential");
+    if (typeof credential !== "string" || !credential) {
+      return json({ error: "Google credential is required" }, { status: 400 });
     }
 
-    return json(
-      { user: decoded },
-      { headers: { "Set-Cookie": await commitSession(session) } },
-    );
-  }
+    let identity: SessionIdentity;
+    try {
+      identity = await verifyGoogleCredential(credential, audience);
+    } catch {
+      return json({ error: "Google login could not be verified" }, { status: 401 });
+    }
 
-  // * Is Logout
-  if (formObj.intent === "Logout") {
-    console.log("intent: Logout");
     const session = await getSession(request);
-
-    return json(
-      { user: null },
-      { headers: { "Set-Cookie": await destroySession(session) } },
-    );
+    const visitor = await getVisitorSession(request);
+    if (visitor?.sub) {
+      await Promise.all([mergeFiles(identity.sub, visitor.sub), mergeTexts(identity.sub, visitor.sub)]);
+      session.unset("visitor");
+    }
+    session.set("user", identity);
+    return json({ user: identity }, { headers: { "Set-Cookie": await commitSession(session) } });
   }
 
-  // * Is acquireMagnet
-  if (formObj.intent === "acquireMagnet") {
-    console.log("intent: acquireMagnet");
-    const token = formObj.token as string;
+  if (intent === "Logout") {
+    const session = await getSession(request);
+    return json({ user: null }, { headers: { "Set-Cookie": await destroySession(session) } });
+  }
 
-    // Check if it's a text token first
-    const textId = await HashMap.getText(token);
-    if (textId) {
-      return json({
-        intent: "acquireMagnet",
-        textId: textId,
-        magnet: null,
-        type: "text",
-      });
+  if (intent === "acquireMagnet") {
+    const token = formData.get("token");
+    if (typeof token !== "string" || !token) {
+      return json({ error: "Token is required" }, { status: 400 });
     }
-
-    // Otherwise try file token
-    // For backward compatibility, HashMap.get() returns fileId which we can use to look up the magnet
     const result = await HashMap.getBoth(token);
-    if (result.fileId) {
-      return json({
-        intent: "acquireMagnet",
-        fileId: result.fileId,
-        magnet: null, // Will be retrieved in client code
-        type: "file",
-      });
+    if (result.status === "deleted") {
+      return json({ intent, type: null, magnet: null });
     }
-
-    return json({
-      intent: "acquireMagnet",
-      magnet: null,
-      type: null,
-    });
+    if (result.textId) {
+      return json({ intent, textId: result.textId, magnet: null, type: "text" });
+    }
+    if (result.type === "file") {
+      const file = await getFileByToken(token);
+      if (file?.magnet) return json({ intent, fileId: file.id, magnet: file.magnet, type: "file" });
+    }
+    return json({ intent, magnet: null, type: null });
   }
+
+  return json({ error: "Unknown intent" }, { status: 400 });
 };
+
+async function downloadTorrentFile(file: BrowserTorrentFile) {
+  const blob = await file.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.textContent = `Download file ${file.name}`;
+  link.download = file.name;
+  const container = document.createElement("div");
+  container.appendChild(link);
+  document.getElementById("fileList")?.appendChild(container);
+  link.click();
+}
 
 export default function Index() {
-  const { googleClientId, user: initialUser } = useLoaderData<{
-    googleClientId: string;
-    user: Record<string, any>;
-  }>();
+  const { googleClientId, user: initialUser } = useLoaderData<typeof loader>();
   const location = useLocation();
-  const [torrent, setTorrent] = useState<any | null>(null);
-  const clientRef = useRef<any | null>(null);
-  const client_id = googleClientId || "";
-  const fetcher = useFetcher<any>();
-  const restoreFetcher = useFetcher<{
-    success?: boolean;
-    url?: string;
-    error?: string;
-  }>();
-  const restoreHandledRef = useRef(false);
   const navigate = useNavigate();
-  const [loggedIn, setLoggedIn] = useState(initialUser ? true : false);
-  const [user, setUser] = useState<Record<string, any> | null>(null);
-  const debounceTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { submit, data } = useFetcher<HomeActionData>();
+  const restoreFetcher = useFetcher<{ success?: boolean; url?: string; error?: string }>();
+  const { submit: restore, state: restoreState, data: restoreData } = restoreFetcher;
+  const restoreHandledRef = useRef(false);
+  const [user, setUser] = useState<SessionIdentity | null>(initialUser);
+  const handledDataRef = useRef<HomeActionData>();
+  const shownMessageKeyRef = useRef<string>();
+  const handledTokenRef = useRef<string>();
 
-  async function loadModule() {
-    console.log("Loading WebTorrent module");
-    if (typeof window !== "undefined" && !clientRef.current) {
-      import("webtorrent").then((WebTorrent) => {
-        clientRef.current = new WebTorrent.default();
-        console.log("WebTorrent client ready", clientRef.current);
-      });
-    }
-  }
-
-  // Handle global paste event
-  async function handlePaste(event: ClipboardEvent) {
-    // [x]: Listen file paste all the time
-    const items = event.clipboardData?.items;
-    if (!items) {
-      return;
-    }
-
-    for (let i = 0; i < items.length; i++) {
-      // string (token or magnet)
-      if (items[i].kind === "string") {
-        console.log("Global string paste event:", items[i]);
-        items[i].getAsString((text) => {
-          let _type = "";
-          if (/^\d+$/.test(text)) _type = "token";
-          else if (text.startsWith("magnet:?")) _type = "magnet";
-          else return;
-          (document.getElementsByName(_type)[0] as HTMLInputElement).value =
-            text;
-          // Add redirect to `_index` here if `global_paste_listener`
-          // is enable on all pages in the future
-          handleDownload(text, _type);
-        });
-        return;
-      }
-
-      // file (go to new file page)
-      if (items[i].kind === "file") {
-        const file = items[i].getAsFile();
-        console.log("Global file paste event:", file);
-        if (!file) continue;
-
-        const fileURL = URL.createObjectURL(file);
-        localStorage.setItem("fileURL", fileURL);
-        const formData = new FormData();
-        formData.append("fileName", file.name);
-        formData.append("mimeType", file.type);
-        fetcher.submit(formData, {
-          method: "POST",
-          action: "/api/new/file",
-        });
-      }
-      return;
-    }
-  }
+  const handleDownload = useCallback((value: string, type: "token" | "magnet") => {
+    if (!value) return;
+    submit(
+      type === "token"
+        ? { intent: "acquireMagnet", token: value }
+        : { intent: "acquireToken", magnet: value },
+      { method: "POST", action: "/api/new/token" },
+    );
+  }, [submit]);
 
   useEffect(() => {
-    document.addEventListener("paste", handlePaste);
-    // ? Remove global on exit _index or not
-    // [ ] Remove event listener lessen pages where paste works
-    // [ ] Keep event listener makes too many reacts
-    return () => {
-      document.removeEventListener("paste", handlePaste);
+    const handlePaste = (event: ClipboardEvent) => {
+      const items = event.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.kind === "file") {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const previousUrl = localStorage.getItem("fileURL");
+          if (previousUrl) URL.revokeObjectURL(previousUrl);
+          localStorage.setItem("fileURL", URL.createObjectURL(file));
+          submit({ fileName: file.name, mimeType: file.type }, { method: "POST", action: "/api/new/file" });
+          return;
+        }
+        if (item.kind === "string") {
+          item.getAsString((raw) => {
+            const text = raw.trim();
+            const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
+            if (!type) return;
+            const input = document.querySelector<HTMLInputElement>(`input[name="${type}"]`);
+            if (input) input.value = text;
+            handleDownload(text, type);
+          });
+          return;
+        }
+      }
     };
-  }, []);
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [handleDownload, submit]);
 
   useEffect(() => {
-    loadModule();
-  }, []);
+    const token = new URLSearchParams(location.search).get("token");
+    if (!token || handledTokenRef.current === token) return;
+    handledTokenRef.current = token;
+    const input = document.getElementById("tokenInput") as HTMLInputElement | null;
+    if (input) input.value = token;
+    handleDownload(token, "token");
+  }, [location.search, handleDownload]);
 
-  // Old code: debounce function (commented out)
-  // const debounce = (value: string, type: string) => {
-  //   if (debounceTimeout.current) {
-  //     clearTimeout(debounceTimeout.current);
-  //   }
-
-  //   // Clear input CSS
-  //   const token_elem = document.getElementById(
-  //     "tokenInput"
-  //   ) as HTMLInputElement;
-  //   const magnet_elem = document.getElementById(
-  //     "magnetInput"
-  //   ) as HTMLInputElement;
-
-  //   if (type === "token") {
-  //     token_elem.className = "";
-  //   } else {
-  //     magnet_elem.className = "";
-  //   }
-  //   void token_elem.offsetWidth;
-
-  //   debounceTimeout.current = setTimeout(() => {
-  //     handleDownload(value, type);
-  //   }, 500);
-  // };
-
-  const handleKeyDown = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    type: string,
-  ) => {
-    if (e.key === "Enter") {
-      const target = e.target as HTMLInputElement;
-      const value = target.value.trim();
-      if (value) {
-        handleDownload(value, type);
-      }
-    }
-
-    // Clear input CSS
-    const token_elem = document.getElementById(
-      "tokenInput",
-    ) as HTMLInputElement;
-    const magnet_elem = document.getElementById(
-      "magnetInput",
-    ) as HTMLInputElement;
-
-    if (type === "token") {
-      token_elem.className = "";
-    } else {
-      magnet_elem.className = "";
-    }
-    void token_elem.offsetWidth;
-  };
-
-  const handleDownload = async (magnet_or_token: string, type: string) => {
-    invariant(magnet_or_token, "No magnet link provided");
-
-    // Load module if not ready
-    if (!clientRef.current) {
-      toast.error("Client not ready. Please try again later.");
-      console.error("Client not ready", clientRef.current);
-      loadModule();
+  useEffect(() => {
+    if (restoreState === "submitting" || restoreState === "loading") {
+      restoreHandledRef.current = false;
       return;
     }
-
-    // Get magnet link if token
-    // ! Cannot get response here, use useEffect in Index()
-    if (type === "token") {
-      // * Is token, get magnet link & save to history
-      console.log("Downloading using token:", magnet_or_token);
-      // Fetch magnet link
-      const formData = new FormData();
-      formData.append("intent", "acquireMagnet");
-      formData.append("token", magnet_or_token);
-      fetcher.submit(formData, {
-        method: "POST",
-        action: "/api/" + "new" + "/token",
-      });
-    } else {
-      // * Is magnet, get token & save to history
-      console.log("Downloading using magnet:", magnet_or_token);
-      const formData = new FormData();
-      formData.append("intent", "acquireToken");
-      formData.append("magnet", magnet_or_token);
-      fetcher.submit(formData, {
-        method: "POST",
-        action: "/api/" + "new" + "/token",
-      });
-    }
-  };
-
-  // After restore API success: navigate to restored file/text (once per response)
-  useEffect(() => {
-    if (restoreFetcher.state !== "idle" || !restoreFetcher.data) return;
-    const d = restoreFetcher.data;
-    if (d.success && d.url && !restoreHandledRef.current) {
-      restoreHandledRef.current = true;
+    if (!restoreData || restoreHandledRef.current) return;
+    restoreHandledRef.current = true;
+    if (restoreData.success && restoreData.url) {
       toast.success("Restored");
-      navigate(d.url);
-    } else if (d.error) {
-      toast.error(d.error);
-    }
-  }, [restoreFetcher.state, restoreFetcher.data, navigate]);
-  // Reset so next restore can navigate again
-  useEffect(() => {
-    if (
-      restoreFetcher.state === "submitting" ||
-      restoreFetcher.state === "loading"
-    ) {
-      restoreHandledRef.current = false;
-    }
-  }, [restoreFetcher.state]);
+      navigate(restoreData.url);
+    } else if (restoreData.error) toast.error(restoreData.error);
+  }, [restoreData, restoreState, navigate]);
 
-  const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
     const message = search.get("message");
     const undoId = search.get("undoId");
     const undoType = search.get("undoType");
-    if (!message) return;
     const key = `${location.pathname}:${location.search}`;
-    if (shownMessageKeyRef.current === key) return;
+    if (!message || shownMessageKeyRef.current === key) return;
     shownMessageKeyRef.current = key;
-    if (
-      message === "Deleted" &&
-      undoId &&
-      (undoType === "file" || undoType === "text")
-    ) {
+    if (message === "Deleted" && undoId && (undoType === "file" || undoType === "text")) {
       toast.success("Deleted", {
         action: {
           label: "Undo",
-          onClick: () => {
-            const fd = new FormData();
-            fd.append("undoId", undoId);
-            fd.append("undoType", undoType);
-            restoreFetcher.submit(fd, {
-              method: "POST",
-              action: "/api/restore",
-            });
-          },
+          onClick: () => restore({ undoId, undoType }, { method: "POST", action: "/api/restore" }),
         },
       });
-    } else if (message === "Deleted") {
-      toast.success("Deleted");
-    } else {
-      toast.info(message);
-    }
+    } else toast.info(message);
     window.history.replaceState({}, "", location.pathname);
-  }, [location]);
+  }, [location, restore]);
 
   useEffect(() => {
-    if (!fetcher.data) {
-      // console.error("No data found");
+    if (!data || handledDataRef.current === data) return;
+    if (data.error) {
+      handledDataRef.current = data;
+      toast.error(data.error);
+      return;
+    }
+    if ("user" in data) {
+      handledDataRef.current = data;
+      setUser(data.user ?? null);
+      return;
+    }
+    if (data.intent !== "acquireToken" && data.intent !== "acquireMagnet") return;
+    if (data.type === "text" && data.textId) {
+      handledDataRef.current = data;
+      navigate(`/texts/${data.textId}`);
       return;
     }
 
-    console.log("Fetcher data:", fetcher.data);
-
-    // Acquire user data
-    if ("user" in fetcher.data) {
-      setUser(fetcher.data.user);
+    const tokenInput = document.getElementById("tokenInput") as HTMLInputElement | null;
+    if (!data.magnet || (data.intent === "acquireToken" && !data.token)) {
+      handledDataRef.current = data;
+      tokenInput?.classList.add("wrong-input");
+      toast.error("No shared file was found for this token or link.");
       return;
     }
-
-    const token_elem = document.getElementById(
-      "tokenInput",
-    ) as HTMLInputElement;
-    const magnet_elem = document.getElementById(
-      "magnetInput",
-    ) as HTMLInputElement;
-
-    // [x] Acquire magnet link & save to history
-    if (fetcher.data?.intent === "acquireMagnet") {
-      // Check if it's a text token
-      if (fetcher.data?.type === "text" && fetcher.data?.textId) {
-        console.log("Redirecting to text:", fetcher.data.textId);
-        window.location.href = `/texts/${fetcher.data.textId}`;
-        return;
-      }
-
-      // Check if it's a file token
-      if (fetcher.data?.type === "file") {
-        token_elem.className = "";
-        void token_elem.offsetWidth;
-        token_elem.classList.add("correct-input");
-      } else {
-        console.error("Token not found");
-        token_elem.className = "";
-        void token_elem.offsetWidth;
-        token_elem.classList.add("wrong-input");
-        return;
-      }
-    }
-
-    // [x] Tested download by magnet link
-    else if (fetcher.data?.intent === "acquireToken") {
-      console.log("Acquiring token...");
-      const target = magnet_elem ?? token_elem;
-      if (!fetcher.data?.token) {
-        console.error("No token found");
-        console.error("No token found");
-        target.className = "";
-        void target.offsetWidth;
-        target.classList.add("wrong-input");
-        // return;
-      } else {
-        console.log("Token acquired:", fetcher.data.token);
-        // Pulse anyway
-        target.className = "";
-        void target.offsetWidth;
-        target.classList.add("correct-input");
-      }
-    }
-
-    const magnet = fetcher.data.magnet;
-    const torrent = clientRef.current.add(magnet);
-    console.log("Client is downloading:", torrent.infoHash);
-    if (debounceTimeout.current) {
-      clearTimeout(debounceTimeout.current);
-    }
-    setTorrent(torrent);
-
-    const DOWNLOAD_TOAST_ID = "download-progress";
-    toast.loading("Downloading 0%", { id: DOWNLOAD_TOAST_ID });
-
-    const progress_div: any = document.getElementById("progress");
-    const down_speed_div: any = document.getElementById("down_speed");
-    const up_speed_div: any = document.getElementById("up_speed");
-    const peers_div: any = document.getElementById("peers");
-
-    torrent.on("ready", () => {
-      console.log("Download started.");
-      if (progress_div) progress_div.innerHTML = `Progress: ${(0).toFixed(2)}%`;
-      if (fetcher.data?.fileId) {
-        const formData = new FormData();
-        formData.append("intent", "updateFile");
-        formData.append("fileid", fetcher.data.fileId);
-        formData.append("magnet", torrent.magnetURI);
-        formData.append("filename", torrent.name);
-        formData.append("filesize", torrent.length);
-        formData.append("filetype", torrent.files[0].type);
-        fetcher.submit(formData, {
-          method: "POST",
-          action: "/api/files",
+    const magnet = data.magnet;
+    let cancelled = false;
+    void loadTorrentClient().then((client) => {
+      if (cancelled || handledDataRef.current === data) return;
+      handledDataRef.current = data;
+      tokenInput?.classList.remove("wrong-input");
+      tokenInput?.classList.add("correct-input");
+      const existing = client.torrents.find((torrent) => torrent.magnetURI === magnet);
+      const torrent = existing ?? client.add(magnet);
+      const toastId = `download-${data.token || torrent.infoHash || magnet}`;
+      toast.loading("Downloading 0%", { id: toastId });
+      const onReady = () => {
+        if (data.fileId) {
+          submit({
+            intent: "updateFile",
+            fileid: data.fileId,
+            magnet: torrent.magnetURI,
+            filename: torrent.name,
+            filesize: String(torrent.length),
+            filetype: torrent.files[0]?.type || "",
+          }, { method: "POST", action: "/api/files" });
+        }
+      };
+      const onDone = () => {
+        toast.dismiss(toastId);
+        toast.success("Download finished! Your file is ready for use 🎉");
+        if (tokenInput) {
+          tokenInput.value = "";
+          tokenInput.className = "";
+        }
+        for (const file of torrent.files) {
+          void downloadTorrentFile(file).catch(() => toast.error("Could not save the downloaded file."));
+        }
+      };
+      if (torrent.ready) onReady();
+      else torrent.on("ready", onReady);
+      if (torrent.done) onDone();
+      else torrent.on("done", onDone);
+      if (!existing) {
+        torrent.on("download", () => {
+          toast.loading(`Downloading ${(torrent.progress * 100).toFixed(1)}%`, {
+            id: toastId,
+            description: `${prettyBytes(torrent.downloadSpeed)}/s · ${torrent.numPeers} peers`,
+          });
+        });
+        torrent.on("error", () => {
+          toast.dismiss(toastId);
+          toast.error("The transfer failed. Check that the sender is still online.");
         });
       }
-    });
+    }).catch(() => toast.error("Could not initialize file sharing. Please try again."));
+    return () => { cancelled = true; };
+  }, [data, navigate, submit]);
 
-    torrent.on("download", () => {
-      const pct = (torrent.progress * 100).toFixed(1);
-      console.log(`Progress: ${pct}%`);
-      if (torrent.progress === 1.0) {
-        if (progress_div) progress_div.innerHTML = `Progress: 100%`;
-        if (down_speed_div) down_speed_div.innerHTML = "";
-        if (up_speed_div) up_speed_div.innerHTML = "";
-        if (peers_div) peers_div.innerHTML = "";
-      } else {
-        if (progress_div) progress_div.innerHTML = `Progress: ${pct}%`;
-        if (down_speed_div)
-          down_speed_div.innerHTML = `Download speed: ${prettyBytes(
-            torrent.downloadSpeed,
-          )}/s`;
-        if (up_speed_div)
-          up_speed_div.innerHTML = `Upload speed: ${prettyBytes(
-            torrent.uploadSpeed,
-          )}/s`;
-        if (peers_div) peers_div.innerHTML = `Peers: ${torrent.numPeers}`;
-      }
-      const desc =
-        torrent.progress < 1
-          ? `${prettyBytes(torrent.downloadSpeed)}/s · ${
-              torrent.numPeers
-            } peers`
-          : undefined;
-      toast.loading(`Downloading ${pct}%`, {
-        id: DOWNLOAD_TOAST_ID,
-        description: desc,
-      });
-    });
-
-    torrent.on("done", async () => {
-      console.log("Download finished.");
-      if (progress_div) progress_div.innerHTML = `Progress: 100%`;
-      toast.dismiss(DOWNLOAD_TOAST_ID);
-      toast.success("Download finished! Your file is ready for use 🎉");
-      if (token_elem) {
-        token_elem.value = "";
-        token_elem.className = "";
-      }
-      if (magnet_elem) {
-        magnet_elem.value = "";
-        magnet_elem.className = "";
-      }
-      for (const file of torrent.files) {
-        console.log("File:", file);
-        downloadTorrentFile(file);
-      }
-    });
-  }, [fetcher.data]);
-
-  async function downloadTorrentFile(file: any) {
-    const blob = await file.blob();
-    console.log("Blob:", blob);
-    const url = URL.createObjectURL(blob);
-
-    const index_elem = document.getElementById("fileList") as HTMLElement;
-    const a = document.createElement("a");
-    const d = document.createElement("div");
-    a.href = url;
-    a.innerText = "Download file" + file.name;
-    a.download = file.name;
-    a.click();
-    d.appendChild(a);
-    index_elem.appendChild(d);
-  }
-
-  const handleLogin = (credentialResponse: any) => {
-    fetcher.load(".");
-    fetcher.submit(
-      {
-        intent: "OAuthCallback",
-        credential: credentialResponse.credential || "",
-      },
-      {
-        method: "POST",
-        action: ".",
-      },
-    );
-    setLoggedIn(true);
-  };
-
-  const handleLogout = () => {
-    fetcher.load(".");
-    fetcher.submit(
-      {
-        intent: "Logout",
-      },
-      {
-        method: "POST",
-        action: ".",
-      },
-    );
-    setLoggedIn(false);
+  const handleLogin = (response: CredentialResponse) => {
+    if (!response.credential) {
+      toast.error("Google did not return a login credential.");
+      return;
+    }
+    submit({ intent: "OAuthCallback", credential: response.credential }, { method: "POST", action: "." });
   };
 
   return (
     <div id="index-page">
-      <div className="">
-        {/* [x]: Make a soft warning here not Swal */}
+      <div>
         <p>Receive using your token:</p>
         <input
           type="text"
           name="token"
+          aria-label="Share token"
           title="💡Try pasting onto page without clicking"
-          onKeyDown={(e) => {
-            handleKeyDown(e, "token");
+          onKeyDown={(event) => {
+            event.currentTarget.className = "";
+            if (event.key === "Enter") handleDownload(event.currentTarget.value.trim(), "token");
           }}
           id="tokenInput"
         />
       </div>
-
-      {/* Old code: magnet link input (commented out) */}
-      {/* <div className="">
-        <p>or using magnet link:</p>
-        <input
-          type="text"
-          name="magnet"
-          title="💡Same thing for magnets or even files :)"
-          onKeyDown={(e) => {
-            handleKeyDown(e, "magnet");
-          }}
-          id="magnetInput"
-        />
-      </div> */}
-
-      {/* <div id="progress"></div>
-      <div id="down_speed"></div>
-      <div id="up_speed"></div>
-      <div id="peers"></div> */}
-
       <div id="fileList"></div>
-
       <div className="google-login-container">
-        <div className={loggedIn ? "" : "hidden"}>
-          <p>
-            You are logged in as {user?.name || initialUser?.name || "visitor"}
-          </p>
-          <button
-            onClick={() => {
-              handleLogout();
-            }}
-          >
-            Logout
-          </button>
-        </div>
-        <GoogleOAuthProvider clientId={client_id}>
-          <div className={loggedIn ? "hidden" : "login-button"}>
-            <p>log in to sync file history:</p>
-            <GoogleLogin
-              onSuccess={(credentialResponse) => {
-                console.log(credentialResponse);
-                handleLogin(credentialResponse);
-              }}
-              onError={() => {
-                console.log("Login Failed");
-              }}
-            />
+        {user ? (
+          <div>
+            <p>You are logged in as {user.name || "visitor"}</p>
+            <button onClick={() => submit({ intent: "Logout" }, { method: "POST", action: "." })}>Logout</button>
           </div>
-        </GoogleOAuthProvider>
+        ) : googleClientId ? (
+          <GoogleOAuthProvider clientId={googleClientId}>
+            <div className="login-button">
+              <p>log in to sync file history:</p>
+              <GoogleLogin onSuccess={handleLogin} onError={() => toast.error("Google login failed.")} />
+            </div>
+          </GoogleOAuthProvider>
+        ) : null}
       </div>
-
       <div className="footer">
-        <a
-          className="visitor-badge"
-          href="https://visitorbadge.io/status?path=https%3A%2F%2Fw2w.space%2F"
-        >
-          <img
-            src={
-              "https://api.visitorbadge.io/api/combined?" +
-              "path=https%3A%2F%2Fw2w.space%2F&" +
-              "countColor=%2337d67a&" +
-              "style=plastic&labelStyle=none"
-            }
-            alt="Visitor badge"
-          />
+        <a className="visitor-badge" href="https://visitorbadge.io/status?path=https%3A%2F%2Fw2w.space%2F">
+          <img src="https://api.visitorbadge.io/api/combined?path=https%3A%2F%2Fw2w.space%2F&countColor=%2337d67a&style=plastic&labelStyle=none" alt="Visitor badge" />
         </a>
-        <a
-          className="github-link"
-          href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project?tab=readme-ov-file#why-w2w"
-        >
-          | Why W2W?
-        </a>
-        <a
-          className="github-link"
-          href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project"
-        >
-          | View on GitHub
-        </a>
+        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/W2W.SPACE#why-w2w">| Why W2W?</a>
+        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/W2W.SPACE">| View on GitHub</a>
       </div>
     </div>
   );

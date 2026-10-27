@@ -127,54 +127,13 @@ Retrieve text by entering the token code.
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Local development and validation
 
-- Node.js 20+
-- Redis server
-- Docker (for containerized deployment)
+Use Node.js **24.22.1**, npm **11.19.1**, and Redis. The maintained application is in `remix/`; `POC/` is historical.
 
-### Local Development
+Follow the [development guide](remix/README.md) for a frozen dependency installation, explicit Redis ports, startup, and regression tests. The development server uses port **5173**. Production requires a securely configured session secret.
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/CSCC09-24F-Project.git
-cd CSCC09-24F-Project
-
-# Start Redis
-redis-server remix/app/redis.windows.conf
-
-# Install dependencies
-cd remix
-npm install
-
-# Start development server
-npm run dev
-```
-
-The application will be available at `http://localhost:3000`
-
-### Deployment
-
-Deploy using the automated script:
-
-```bash
-./deploy.sh
-```
-
-Or manually:
-
-```bash
-# Build and push Docker image
-cd remix
-docker buildx build --platform=linux/amd64 -t zheyuanwei/w2w:latest --push .
-
-# SSH to server and update
-ssh user@server
-cd ~/CSCC09-24F-Project/remix
-docker-compose pull
-docker-compose down
-docker-compose up -d
-```
+See [compatibility findings](docs/COMPATIBILITY.md) for tested versions and remaining upstream advisories, and [release/rollback instructions](docs/RELEASE.md) before publishing. Release tooling validates the exact commit and replaces only the application service.
 
 ---
 
@@ -211,7 +170,7 @@ CSCC09-24F-Project/
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
 - `npm run start` - Start production server
-- `./deploy.sh` - Automated deployment with timing
+- `./deploy-auto.sh` - Explicit verify/build/publish/release/rollback actions (see the release guide)
 
 ---
 
