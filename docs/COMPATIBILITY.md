@@ -86,9 +86,10 @@ it as such.
 | Targeted IP replacement tests | Passed: 3 tests, zero failures/skips, on Node 24.22.1 |
 | Final type generation, TypeScript and lint | Passed; lint enforces zero warnings |
 | Production build | Passed; chunk-splitting notices remain as described below |
-| Complete application regression suite | Passed: 22 tests, including the 3 IP tests; zero failures, skips or cancellations |
-| Browser validation | Passed: 8 checkpoints, zero page errors |
-| React Router 7 Docker build and runtime smoke | Passed: health reports tested revision `candidate-router7`; UID 1000; no `.env` or Vite in the runtime image; text create/save/token/delete/undo and file metadata/token/SSR/cleanup flows pass |
+| Complete application regression suite | Passed: 24 tests, including the 3 IP tests and file metadata/deduplication regressions; zero failures, skips or cancellations |
+| Browser validation | Passed: 9 UI-restoration checkpoints, zero page errors; exact clipboard values, denied/unavailable clipboard handling, notes save and byte-exact same-context file download |
+| Historical UI comparison | 14 of 15 screenshots pixel-identical to `8b2e1ba` across 1440px, 768px and 390px; one text-editor screenshot differs only in a 34×12px scrollbar color region |
+| React Router 7 Docker build and runtime smoke | Passed for earlier commit `0e95c2c973fc64296f0248184f895de7d50e608c`: health reports that full SHA; UID 1000; no `.env` or Vite in the runtime image; text and file HTTP smoke flows pass. This image does not include the subsequent UI restoration; rebuild and smoke-test the intended release commit before deployment. |
 | Reusable Node 24.22.1 installer replay | Passed, including the production build |
 | Full cross-browser P2P transfer | Not verified: the transfer attempt did not complete under managed browser UDP restrictions |
 | Real Google OAuth login | Not run; credential validation regressions do not replace a real login |
@@ -104,6 +105,21 @@ and functional checks completed successfully, without suppressing them.
 Audit results describe known advisories at the time of the query; they are not
 a guarantee of freedom from unknown defects. Re-run both audit scopes and the
 functional checks when the lockfile, framework behavior or release image changes.
+
+The UI restoration uses the pre-upgrade Git baseline `8b2e1ba`: file-link Copy
+returns to the input row, the favorite star returns inside the heading, and the
+added detail-page Copy token and Receive file controls are removed. New cards
+retain their original appearance with keyboard access. Baseline narrow-screen
+overflow is unchanged. The visual comparison used historical source, not the
+user's supplied screenshots. Existing ownership checks and secure clipboard
+behavior remain in place.
+
+The browser regression also exposed a pre-existing duplicate-detection defect:
+opening or favoriting a populated file could match an unrelated empty draft.
+Metadata-only updates now stay on the requested record; identity changes compare
+the complete candidate and retain omitted notes. Regression tests cover this and
+the intended duplicate-save behavior. The successful same-context download checks
+the file bytes and original navigation flow; it does not establish cross-peer P2P.
 
 Runtime support references: [official Node releases](https://nodejs.org/dist/index.json)
 and [Node support schedule](https://github.com/nodejs/Release/blob/main/schedule.json).

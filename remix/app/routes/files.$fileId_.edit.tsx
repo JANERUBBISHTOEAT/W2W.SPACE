@@ -185,22 +185,33 @@ export default function EditFile() {
     const key = `${location.pathname}:${location.search}`;
     if (!message || shownMessageKeyRef.current === key) return;
     shownMessageKeyRef.current = key;
-    toast.info(message);
+    if (message === "Existing file found") {
+      toast.info(message, {
+        action: {
+          label: "Go to file",
+          onClick: () => navigate(`/files/${savedFile.id}`),
+        },
+      });
+    } else {
+      toast.info(message);
+    }
     window.history.replaceState({}, "", location.pathname);
-  }, [location]);
+  }, [location, navigate, savedFile.id]);
 
-  const copy = (value: string) => {
-    void navigator.clipboard.writeText(value).then(
-      () => toast.success("Copied to clipboard"),
-      () => toast.error("Could not copy. Please copy the value manually."),
-    );
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Could not copy. Please allow clipboard access and try again.");
+    }
   };
   const magnet = torrent?.magnetURI || savedFile.magnet || "";
   const shareToken = token || savedFile.token || "";
 
   return (
     <Form key={savedFile.id} id="contact-form" method="post">
-      {actionData && "error" in actionData ? <p role="alert">{actionData.error}</p> : null}
+      {actionData && "error" in actionData ? <output role="alert">{actionData.error}</output> : null}
       <div
         id="dropzone"
         role="button"
@@ -224,15 +235,16 @@ export default function EditFile() {
       </div>
       <p>
         <span>Name</span>
-        <input aria-label="Filename" name="fileName" value={file?.name || savedFile.filename || ""} placeholder="Filename" readOnly />
-        <input aria-label="Token" value={shareToken} placeholder="Token" readOnly />
-        <button type="button" onClick={() => copy(shareToken)}>Copy</button>
+        <input aria-label="Filename" name="fileName" value={file?.name || savedFile.filename || ""} placeholder="Filename" type="text" readOnly />
+        <input aria-label="Token" name="token" value={shareToken} placeholder="Token" type="text" disabled readOnly />
+        <button id="copy-token" type="button" aria-label="Copy token" onClick={() => copy(shareToken)}>Copy</button>
       </p>
-      <label>
-        <span>File Link</span>
-        <input name="magnet" value={magnet} placeholder="magnet:?" readOnly />
-      </label>
-      <button type="button" onClick={() => copy(magnet)}>Copy link</button>
+      <div className="file-link-row">
+        <label htmlFor="file-magnet">File Link</label>
+        <input id="file-magnet" name="_magnet" value={magnet} placeholder="magnet:?" type="text" disabled readOnly />
+        <input name="magnet" value={magnet} type="hidden" readOnly />
+        <button id="copy-magnet" type="button" aria-label="Copy file link" onClick={() => copy(magnet)}>Copy</button>
+      </div>
       <label>
         <span>Notes</span>
         <textarea defaultValue={savedFile.notes || ""} name="notes" rows={6} />

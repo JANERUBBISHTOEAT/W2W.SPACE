@@ -386,20 +386,24 @@ i {
   margin-right: 1rem;
 }
 #contact-form > p:first-of-type,
-#contact-form label {
+#contact-form label,
+#contact-form .file-link-row {
   display: flex;
 }
 #contact-form p:first-of-type span,
-#contact-form label span {
+#contact-form label span,
+#contact-form .file-link-row > label {
   width: 8rem;
 }
 #contact-form p:first-of-type input,
 #contact-form label input,
-#contact-form label textarea {
+#contact-form label textarea,
+#contact-form .file-link-row > input:not([type="hidden"]) {
   flex-grow: 2;
 }
 #contact-form label button,
-#contact-form p:first-of-type button {
+#contact-form p:first-of-type button,
+#contact-form .file-link-row > button {
   z-index: 1;
   margin-left: -2rem;
   cursor: pointer;

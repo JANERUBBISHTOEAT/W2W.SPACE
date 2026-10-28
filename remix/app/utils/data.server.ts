@@ -301,11 +301,15 @@ export async function updateFile(
   if (!file) {
     throw new Error(`No file found for ${fileId}`);
   }
-  // * Deduplicate: if another file already has same magnet+filename, keep that one and drop current.
-  if (!force) {
-    const duplicateFile = await fileService.get_dup(userId, updates, fileId);
+  const candidate = { ...file, ...updates };
+  const updatesIdentity = updates.magnet !== undefined || updates.filename !== undefined;
+  // Metadata-only updates must stay on the requested record. When saving a
+  // file identity, compare the complete candidate so omitted fields retain
+  // their existing values instead of accidentally matching an empty draft.
+  if (!force && updatesIdentity && candidate.magnet && candidate.filename) {
+    const duplicateFile = await fileService.get_dup(userId, candidate, fileId);
     if (duplicateFile) {
-      const notesMatch = (duplicateFile.notes ?? "") === (updates.notes ?? "");
+      const notesMatch = (duplicateFile.notes ?? "") === (candidate.notes ?? "");
       if (notesMatch && allowDelete) {
         console.log("Deleting duplicate file:", fileId);
         await fileService.destroy(userId, fileId);
@@ -322,10 +326,7 @@ export async function updateFile(
     }
   }
 
-  const newFile = await fileService.set(userId, fileId, {
-    ...file,
-    ...updates,
-  });
+  const newFile = await fileService.set(userId, fileId, candidate);
   return newFile;
 }
 

@@ -122,7 +122,7 @@ async function downloadTorrentFile(file: BrowserTorrentFile) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.textContent = `Download file ${file.name}`;
+  link.textContent = `Download file${file.name}`;
   link.download = file.name;
   const container = document.createElement("div");
   container.appendChild(link);
@@ -221,6 +221,8 @@ export default function Index() {
           onClick: () => restore({ undoId, undoType }, { method: "POST", action: "/api/restore" }),
         },
       });
+    } else if (message === "Deleted") {
+      toast.success("Deleted");
     } else toast.info(message);
     window.history.replaceState({}, "", location.pathname);
   }, [location, restore]);
@@ -247,7 +249,11 @@ export default function Index() {
     const tokenInput = document.getElementById("tokenInput") as HTMLInputElement | null;
     if (!data.magnet || (data.intent === "acquireToken" && !data.token)) {
       handledDataRef.current = data;
-      tokenInput?.classList.add("wrong-input");
+      if (tokenInput) {
+        tokenInput.className = "";
+        void tokenInput.offsetWidth;
+        tokenInput.classList.add("wrong-input");
+      }
       toast.error("No shared file was found for this token or link.");
       return;
     }
@@ -256,8 +262,11 @@ export default function Index() {
     void loadTorrentClient().then((client) => {
       if (cancelled || handledDataRef.current === data) return;
       handledDataRef.current = data;
-      tokenInput?.classList.remove("wrong-input");
-      tokenInput?.classList.add("correct-input");
+      if (tokenInput) {
+        tokenInput.className = "";
+        void tokenInput.offsetWidth;
+        tokenInput.classList.add("correct-input");
+      }
       const existing = client.torrents.find((torrent) => torrent.magnetURI === magnet);
       const torrent = existing ?? client.add(magnet);
       const toastId = `download-${data.token || torrent.infoHash || magnet}`;
@@ -324,6 +333,7 @@ export default function Index() {
           title="💡Try pasting onto page without clicking"
           onKeyDown={(event) => {
             event.currentTarget.className = "";
+            void event.currentTarget.offsetWidth;
             if (event.key === "Enter") handleDownload(event.currentTarget.value.trim(), "token");
           }}
           id="tokenInput"
@@ -349,8 +359,8 @@ export default function Index() {
         <a className="visitor-badge" href="https://visitorbadge.io/status?path=https%3A%2F%2Fw2w.space%2F">
           <img src="https://api.visitorbadge.io/api/combined?path=https%3A%2F%2Fw2w.space%2F&countColor=%2337d67a&style=plastic&labelStyle=none" alt="Visitor badge" />
         </a>
-        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/W2W.SPACE#why-w2w">| Why W2W?</a>
-        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/W2W.SPACE">| View on GitHub</a>
+        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project?tab=readme-ov-file#why-w2w">| Why W2W?</a>
+        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project">| View on GitHub</a>
       </div>
     </div>
   );

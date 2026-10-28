@@ -50,6 +50,10 @@ export default function New() {
             padding: "2rem",
             fontSize: "2rem",
             fontWeight: "bold",
+            color: "inherit",
+            textAlign: "inherit",
+            boxShadow: "none",
+            transform: "none",
             transition: "all 0.2s",
             background: "#fff",
           }}
@@ -83,6 +87,10 @@ export default function New() {
             padding: "2rem",
             fontSize: "2rem",
             fontWeight: "bold",
+            color: "inherit",
+            textAlign: "inherit",
+            boxShadow: "none",
+            transform: "none",
             transition: "all 0.2s",
             background: "#fff",
           }}

@@ -233,6 +233,87 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert.equal(response.status, 404);
   });
 
+  await t.test("file metadata updates stay on the requested file when an empty draft exists", async () => {
+    const owner = await visitor(app.baseURL);
+    const magnet = "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=metadata.txt";
+    let response = await owner("/api/new/token", { intent: "acquireToken", magnet });
+    assert.equal(response.status, 200);
+    const original = await response.json();
+    const fileRoute = "routes/files.$fileId";
+    const editRoute = "routes/files.$fileId_.edit";
+    const originalPath = `/files/${original.fileId}`;
+    response = await owner(dataPath(originalPath, fileRoute));
+    const before = (await decodeData(response, fileRoute)).file;
+
+    response = await owner("/new", { type: "file" });
+    assert.equal(response.status, 302);
+    const draftEditPath = response.headers.get("location");
+    assert.match(draftEditPath, /^\/files\/[^/?]+\/edit$/);
+    const draftPath = draftEditPath.replace(/\/edit$/, "");
+    assert.notEqual(draftPath, originalPath);
+
+    response = await owner(dataPath(`${originalPath}/edit`, editRoute));
+    assert.equal(response.status, 200);
+    const opened = (await decodeData(response, editRoute)).file;
+    assert.equal(opened.id, original.fileId, "opening a populated file must not return the empty draft");
+    assert.equal(opened.magnet, magnet);
+    assert.equal(opened.filename, before.filename);
+    assert.equal(opened.accessCount, before.accessCount + 1);
+
+    response = await owner(dataPath(originalPath, fileRoute), { favorite: "true" });
+    assert.equal(response.status, 200);
+    const favorited = await decodeData(response);
+    assert.equal(favorited.id, original.fileId);
+    assert.equal(favorited.favorite, true);
+    assert.equal(favorited.magnet, magnet);
+    response = await owner(dataPath(originalPath, fileRoute));
+    assert.equal((await decodeData(response, fileRoute)).file.favorite, true, "the favorite update must be persisted on the original");
+    response = await owner(dataPath(draftPath, fileRoute));
+    const draft = (await decodeData(response, fileRoute)).file;
+    assert.equal(draft.magnet, undefined);
+    assert.equal(draft.filename, undefined);
+    assert.equal(draft.favorite, undefined);
+    assert.equal((await owner(`${originalPath}/destroy`, {})).status, 302);
+    assert.equal((await owner(`${draftPath}/destroy`, {})).status, 302);
+  });
+
+  await t.test("file saves deduplicate matching identity and notes while preserving distinct notes", async () => {
+    const owner = await visitor(app.baseURL);
+    const magnet = "magnet:?xt=urn:btih:2222222222222222222222222222222222222222&dn=duplicate.txt";
+    let response = await owner("/api/new/token", { intent: "acquireToken", magnet });
+    assert.equal(response.status, 200);
+    const original = await response.json();
+    const originalPath = `/files/${original.fileId}`;
+    const save = { fileName: "New File", magnet, fileSize: "0", fileType: "text/plain", notes: "" };
+
+    response = await owner("/new", { type: "file" });
+    assert.equal(response.status, 302);
+    const duplicateEditPath = response.headers.get("location");
+    response = await owner(duplicateEditPath, save);
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), `${originalPath}/edit?message=Existing+file+found`);
+    response = await owner(duplicateEditPath.replace(/\/edit$/, ""));
+    assert.equal(response.status, 302, "saving the exact duplicate must remove the redundant draft");
+    assert.equal(response.headers.get("location"), "/?message=Page+Not+Found");
+
+    response = await owner("/new", { type: "file" });
+    const separateEditPath = response.headers.get("location");
+    const separatePath = separateEditPath.replace(/\/edit$/, "");
+    const separateId = separatePath.split("/").pop();
+    response = await owner(separateEditPath, { ...save, notes: "Keep this annotation" });
+    assert.equal(response.status, 302);
+    assert.equal(response.headers.get("location"), `${separatePath}/?message=File+saved`);
+    response = await owner("/api/files", { fileid: separateId, filename: "New File" });
+    assert.equal(response.status, 200);
+    const updated = (await response.json()).file;
+    assert.equal(updated.id, separateId, "an omitted notes field must retain the current record's distinct notes");
+    assert.equal(updated.notes, "Keep this annotation");
+    assert.equal(updated.magnet, magnet);
+    assert.equal((await owner(originalPath)).status, 200);
+    assert.equal((await owner(`${originalPath}/destroy`, {})).status, 302);
+    assert.equal((await owner(`${separatePath}/destroy`, {})).status, 302);
+  });
+
   await t.test("an unsigned Google credential cannot establish a signed-in session", async () => {
     const request = await visitor(app.baseURL);
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");

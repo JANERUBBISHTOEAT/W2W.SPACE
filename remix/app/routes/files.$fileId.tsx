@@ -4,7 +4,6 @@ import {
   data,
   redirect,
   Form,
-  Link,
   useFetcher,
   useLoaderData,
   useLocation,
@@ -100,18 +99,29 @@ export default function File() {
 
       <div>
         <h1>
-          {file.filename || file.token ? (
-            <>
-              {file.filename} #{file.token}
-            </>
-          ) : (
-            <i>No Name</i>
-          )}{" "}
-          {file.token ? <button type="button" onClick={copyToken(file.token)}>Copy token</button> : null}
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={copyToken(file.token ?? "")}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                void copyToken(file.token ?? "")();
+              }
+            }}
+          >
+            {file.filename || file.token ? (
+              <>
+                {file.filename} #{file.token}
+              </>
+            ) : (
+              <i>No Name</i>
+            )}
+          </span>{" "}
+          {canManage ? <Favorite file={file} /> : null}
         </h1>
 
-        {canManage ? <Favorite file={file} /> : null}
-        {file.token ? <p><Link to={`/?token=${encodeURIComponent(file.token)}`}>Receive file</Link></p> : null}
+        <p aria-hidden="true" />
         {file.size ? <p>Size: {prettyBytes(file.size)}</p> : null}
         {file.notes ? (
           <>
