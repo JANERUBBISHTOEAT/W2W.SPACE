@@ -55,7 +55,10 @@ Current checks run on Node 24.22.1 / npm 11.19.1:
 | Complete regression suite | 30 tests passed, zero failures/skips/cancellations |
 | Browser comparison against `b4f1429` | 44 screenshots / 22 pairs; 20 pairs pixel-identical, two differ only in the Monaco scrollbar; 28 interactions passed, zero page errors |
 | Client build artifact comparison | All 57 files byte-identical |
-| Docker image rebuild, real Google OAuth, cross-peer P2P, deployment | Not run in this follow-up |
+| Docker image build and runtime | Passed against code commit `51d88a5`: eight check groups, correct image/revision, UID 1000 and built-in HEALTHCHECK healthy |
+| Real browser file selection, local seeding and same-context download | Passed: 64 KiB file, real magnet/token, saved metadata/notes and byte-identical download |
+| Cross-browser P2P | Attempted with default public trackers and separate local WS signaling; neither completed, zero received bytes |
+| Real Google OAuth and production deployment | Not run in this follow-up |
 
 Browser checks used Chromium 154.0.8037.57 with identical fixed Redis fixtures,
 signed test sessions, locale/timezone and 1440x900 / 390x900 viewports. Both
@@ -72,10 +75,42 @@ are each 815 pixels (0.063%) within the rightmost Monaco scrollbar strip,
 bounding box `[1426, 73, 1440, 862]`; image inspection confirms a scrollbar fade
 color difference without content, layout or success-notification changes.
 Existing narrow-screen horizontal overflow remains unchanged; full-page
-screenshots therefore extend past the 390px viewport. Actual upload and peer
-transfer were not exercised. The external visitor-count service returned 403
-for both versions, so its working appearance is not covered. No unexpected UI
+screenshots therefore extend past the 390px viewport. The external visitor-count
+service returned 403 for both versions, so its working appearance is not covered. No unexpected UI
 change was found in the observed states; this does not verify real Google login.
+
+The code changes were saved in local commit
+`51d88a586e7296f5c5ab7fc02497e60eeee0b8c7`. Its tree was independently compared
+with the previously tested patch applied to `b4f14293`; the trees match exactly.
+The image `w2w-review:51d88a5` has ID
+`sha256:616af87850b919c681cfcf0d457eaa442a4c223cd45e67ec464e7db93efa9727`.
+Its image label, running container image and `/health` all match that full code
+commit. Isolated Docker tests verify text/file HTTP sharing, ownership, deletion,
+undo and final-recipient lifecycle. Vite, ESLint and `@react-router/dev` are
+absent from the runtime, with no application `.env`, key or build-CA files.
+TypeScript 5.9.3 remains as React Router's optional production peer. All test
+containers and their separate network were removed; no production data was used.
+
+Additional real-browser testing selected a 65,536-byte fixture through the file
+chooser, seeded it in WebTorrent, saved its real magnet/token and notes, then
+downloaded it through the application in the same browser context. Input and
+download SHA-256 both equal
+`f5dc4b6326a1c2f2cfc6dab83e723d71459586acfcefd250e118e866cbe8de22`.
+This application shares client-side file bytes; that check does not establish a
+server-side byte upload or a cross-peer transfer.
+
+Two independent Chromium processes were also tested as sender and receiver.
+The default public-tracker attempt did not complete within 45 seconds. Chromium
+reported proxy-CA trust errors; a normal CA import into an isolated task profile
+reached the native file picker, which the available headless tools could not
+control. TLS verification and the global trust store were left unchanged.
+In a separately labeled local-WS diagnostic, real offer/answer signaling worked,
+but neither browser emitted a non-null ICE candidate; the receiver remained at
+zero peers and zero bytes for 45 seconds. No ICE configuration, network policy or
+payload was changed to force a pass. These observations do not verify public P2P
+or establish that UDP is the sole cause. The active default-tracker trial also
+recorded two `signal is aborted without reason` page errors; the earlier zero
+page-error result applies specifically to the screenshot regression suite.
 
 Historical GitHub security-notification emails were checked against the current
 lockfile. They are not a live alert inventory. The repository's security page
