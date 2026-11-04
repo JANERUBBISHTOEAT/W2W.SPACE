@@ -1,8 +1,183 @@
 # Runtime, dependency migration and verification
 
 This report covers the maintained application in `remix/` and its committed
-lockfile. The historical `POC/` package is outside this runtime and audit scope.
+lockfile. The unused historical `POC/` package has been removed with the owner's
+authorization, leaving one maintained application package to audit.
 Deployment and rollback procedures are in [RELEASE.md](RELEASE.md).
+
+## November 4, 2026 security review
+
+This follow-up starts from remote `main` at `b4f1429`, rather than the older
+`work` checkout or an uncommitted patch in another workspace. The starting
+lockfile already contains `path-to-regexp` 0.1.13, the patched version for
+[GHSA-37ch-88jc-xwx2](https://github.com/advisories/GHSA-37ch-88jc-xwx2).
+Version 0.1.12 is still affected and must not replace it.
+
+A fresh npm audit found seven moderate package/meta-vulnerability entries, all
+from [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249):
+minimatch `>=7 <11.0.1`. Production-only audit already had zero entries.
+The affected copies were minimatch 9.0.9 under `@react-router/fs-routes`
+and 10.2.6 under `@typescript-eslint/typescript-estree`.
+
+The fix removes `@react-router/fs-routes` and declares the same 16 routes with
+the framework's `route`/`index` helpers. Before/after `react-router routes --json`
+outputs are byte-identical, including IDs, files, paths, ordering and hierarchy.
+This avoids forcing minimatch 11 into a consumer that calls `makeRe()`, an API
+removed in [minimatch 11](https://github.com/isaacs/minimatch/blob/v11.0.1/changelog.md).
+New route modules must now be registered in `app/routes.ts`.
+
+A scoped override upgrades only typescript-estree's minimatch to 11.0.1.
+That consumer uses the retained `minimatch(filePath, pattern, { dot: true })`
+interface. Real parser/project-service regression tests verify matching,
+nonmatching and hidden-file default-project behavior, including type information.
+The unrelated minimatch 3.1.5 consumers remain unchanged; this advisory does not
+include that version.
+
+Code review also reproduced a sharing defect: when a visitor received a file
+and then logged in, `mergeFiles` allocated a recipient-specific token instead of
+retaining the sender's shared token. Deleting the sender's history could then
+invalidate the original link even while the recipient retained the file.
+Login migration now moves existing server-owned records with their token and
+metadata, preserving the duplicate check. An isolated Redis regression failed
+before the fix and passes afterward; it also checks final-recipient deletion
+and account-file deduplication.
+
+Current checks run on Node 24.22.1 / npm 11.19.1:
+
+| Check | November 4 result |
+| --- | --- |
+| Frozen `npm ci --engine-strict` using the updated lockfile | Passed |
+| Full and production-only `npm audit --json` | Both zero known advisories |
+| Route manifest comparison | All 16 routes byte-identical |
+| Type generation and TypeScript | Passed |
+| ESLint with `--max-warnings=0` | Passed |
+| Production build | Passed; upstream future-flag and chunk-splitting notices remain |
+| Complete regression suite | 30 tests passed, zero failures/skips/cancellations |
+| Browser comparison against `b4f1429` | 44 screenshots / 22 pairs; 20 pairs pixel-identical, two differ only in the Monaco scrollbar; 28 interactions passed, zero page errors |
+| Client build artifact comparison | All 57 files byte-identical |
+| Docker image build and runtime | Passed against code commit `51d88a5`: eight check groups, correct image/revision, UID 1000 and built-in HEALTHCHECK healthy |
+| Real browser file selection, local seeding and same-context download | Passed: 64 KiB file, real magnet/token, saved metadata/notes and byte-identical download |
+| Cross-browser P2P | Matched baseline/fixed tests both pass with a controlled local WS + TURN/TCP fixture; default public-tracker paths remain unverified |
+| Real Google OAuth and production deployment | Not run in this follow-up |
+
+Browser checks used Chromium 154.0.8037.57 with identical fixed Redis fixtures,
+signed test sessions, locale/timezone and 1440x900 / 390x900 viewports. Both
+versions ran production builds against separate disposable Redis instances.
+The 11 checkpoints at each width cover dashboard, new-item menu, file details,
+favorite state, file editing, saved notes, empty file, Monaco editor, saved text
+with its real success notification, token reception and deletion confirmation.
+Interactions verify persisted favorites/notes/title, exact clipboard values,
+token reception and deletion cancellation. Screenshots used no masks or custom
+CSS; animations and the input caret were disabled for capture.
+
+All 11 narrow-viewport pairs are pixel-identical. The two desktop differences
+are each 815 pixels (0.063%) within the rightmost Monaco scrollbar strip,
+bounding box `[1426, 73, 1440, 862]`; image inspection confirms a scrollbar fade
+color difference without content, layout or success-notification changes.
+Existing narrow-screen horizontal overflow remains unchanged; full-page
+screenshots therefore extend past the 390px viewport. The external visitor-count
+service returned 403 for both versions, so its working appearance is not covered. No unexpected UI
+change was found in the observed states; this does not verify real Google login.
+
+The code changes were saved in local commit
+`51d88a586e7296f5c5ab7fc02497e60eeee0b8c7`. Its tree was independently compared
+with the previously tested patch applied to `b4f14293`; the trees match exactly.
+The image `w2w-review:51d88a5` has ID
+`sha256:616af87850b919c681cfcf0d457eaa442a4c223cd45e67ec464e7db93efa9727`.
+Its image label, running container image and `/health` all match that full code
+commit. Isolated Docker tests verify text/file HTTP sharing, ownership, deletion,
+undo and final-recipient lifecycle. Vite, ESLint and `@react-router/dev` are
+absent from the runtime, with no application `.env`, key or build-CA files.
+TypeScript 5.9.3 remains as React Router's optional production peer. All test
+containers and their separate network were removed; no production data was used.
+
+Additional real-browser testing selected a 65,536-byte fixture through the file
+chooser, seeded it in WebTorrent, saved its real magnet/token and notes, then
+downloaded it through the application in the same browser context. Input and
+download SHA-256 both equal
+`f5dc4b6326a1c2f2cfc6dab83e723d71459586acfcefd250e118e866cbe8de22`.
+This application shares client-side file bytes; that check does not establish a
+server-side byte upload or a cross-peer transfer.
+
+Two independent Chromium processes were also tested as sender and receiver.
+The default public-tracker attempt did not complete within 45 seconds. Chromium
+reported proxy-CA trust errors; a normal CA import into an isolated task profile
+reached the native file picker, which the available headless tools could not
+control. TLS verification and the global trust store were left unchanged.
+In a separately labeled local-WS diagnostic, real offer/answer signaling worked,
+but neither browser emitted a non-null ICE candidate; the receiver remained at
+zero peers and zero bytes for 45 seconds. No ICE configuration, network policy or
+payload was changed to force a pass. These observations do not verify public P2P
+or establish that UDP is the sole cause. The active default-tracker trial also
+recorded two `signal is aborted without reason` page errors; the earlier zero
+page-error result applies specifically to the screenshot regression suite.
+
+### Paired P2P verification
+
+Subsequent paired tests compare baseline `b4f14293` with code commit `51d88a5`
+using the same Chromium 154.0.8037.57, Node 24.22.1, proxy/bypass, 65,536-byte
+fixture, tracker settings and 45-second timeout. Each version has isolated
+Redis/application processes and two separate Chromium processes. Runs are
+sequential, with every browser/tracker closed before starting the next version;
+the receiver selects no file and begins with an empty torrent client.
+
+With the original ICE configuration, both versions fail identically to receive
+bytes through public trackers or local WS signaling. Public WSS reports proxy
+tunnel and CA-trust errors. Local signaling exchanges offers/answers in both
+versions, but emits zero non-null ICE candidates and receives zero bytes.
+Read-only `chrome://policy` checks confirm the effective mandatory policy
+`WebRtcIPHandling=disable_non_proxied_udp`; audio/video capture is also disabled.
+A separate Node loopback UDP probe succeeds, so these results do not establish
+that the executor cannot use UDP at all.
+
+A controlled relay fixture then appends the same localhost-only authenticated
+TURN/TCP server to each version's existing RTC ICE servers, preserving all
+other options and mandatory policies. This is the TCP fallback supported by
+the [Chromium policy](https://chromium.googlesource.com/chromium/src/+/154.0.8037.57/components/policy/resources/templates/policy_definitions/WebRtc/WebRtcIPHandling.yaml).
+No network policy, global CA trust, media permission or browser security flag
+is changed. A private local WS tracker supplies signaling; this fixture is not
+the default public deployment path.
+
+Both versions complete real cross-browser WebTorrent transfers: the receiver
+downloads 65,536 bytes with the SHA-256 above, has a real peer, and both ends
+select a successful relay candidate pair with `relayProtocol=tcp` and positive
+sent/received bytes. The relay candidate's SDP `protocol=udp` describes the
+TURN server's local relay side, not a nonproxied browser UDP connection. Both
+matched original-config reruns and relay-fixture runs record zero page errors;
+the earlier two abort errors are not reproduced in these paired runs.
+
+This comparison found no P2P regression in the tested code change. It verifies
+the controlled TCP-relay path on both versions; public-tracker P2P remains
+unverified in this environment. All compared applications still use WebTorrent
+2.8.5. Reproduction harnesses, effective-policy screenshots, original and relay
+summaries, and the downloaded byte artifacts are retained with the task evidence.
+
+### WebTorrent update availability
+
+The November 4 registry/release check confirms manifest `^2.8.5`, lockfile and
+installed version 2.8.5, also the current Vite-aliased browser bundle version.
+It is the latest 2.x release. The latest stable release is
+[3.0.21](https://github.com/webtorrent/webtorrent/releases/tag/v3.0.21), published
+July 27, 2026. This is a major update outside the existing semver range; no
+WebTorrent manifest, lockfile or runtime version was changed for this check.
+
+Version 3 requires Node 22 or later, which the selected Node 24.22.1 satisfies.
+Its published artifact retains the ESM `dist/webtorrent.min.js` path, add/seed
+interfaces and asynchronous `file.blob()` API used here. Its changelog includes
+connection/port-exhaustion and rate/webseed fixes plus major protocol/piece
+dependency changes and a streamx pin. The tracker still requests vulnerable
+`ip`, so the scoped `@webpod/ip` replacement remains necessary; npm overrides
+do not rewrite precompiled browser bundles. These are static compatibility
+findings, not a 3.x installation or P2P test. The unused historical
+`public/webtorrent.min.js` embeds 1.9.7; the active application imports the npm
+bundle, and that historical file was left unchanged under the read-only check.
+
+Historical GitHub security-notification emails were checked against the current
+lockfile. They are not a live alert inventory. The repository's security page
+returned HTTP 404 in this environment, and the previously denied Dependabot API
+was not retried or bypassed. The zero counts above describe npm's current audit
+results; they do not establish that GitHub's live alert list is empty. No changes
+were pushed, merged or deployed.
 
 ## Versions and migration boundary
 
