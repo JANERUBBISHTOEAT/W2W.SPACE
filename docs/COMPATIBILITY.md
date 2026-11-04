@@ -57,7 +57,7 @@ Current checks run on Node 24.22.1 / npm 11.19.1:
 | Client build artifact comparison | All 57 files byte-identical |
 | Docker image build and runtime | Passed against code commit `51d88a5`: eight check groups, correct image/revision, UID 1000 and built-in HEALTHCHECK healthy |
 | Real browser file selection, local seeding and same-context download | Passed: 64 KiB file, real magnet/token, saved metadata/notes and byte-identical download |
-| Cross-browser P2P | Attempted with default public trackers and separate local WS signaling; neither completed, zero received bytes |
+| Cross-browser P2P | Matched baseline/fixed tests both pass with a controlled local WS + TURN/TCP fixture; default public-tracker paths remain unverified |
 | Real Google OAuth and production deployment | Not run in this follow-up |
 
 Browser checks used Chromium 154.0.8037.57 with identical fixed Redis fixtures,
@@ -111,6 +111,66 @@ payload was changed to force a pass. These observations do not verify public P2P
 or establish that UDP is the sole cause. The active default-tracker trial also
 recorded two `signal is aborted without reason` page errors; the earlier zero
 page-error result applies specifically to the screenshot regression suite.
+
+### Paired P2P verification
+
+Subsequent paired tests compare baseline `b4f14293` with code commit `51d88a5`
+using the same Chromium 154.0.8037.57, Node 24.22.1, proxy/bypass, 65,536-byte
+fixture, tracker settings and 45-second timeout. Each version has isolated
+Redis/application processes and two separate Chromium processes. Runs are
+sequential, with every browser/tracker closed before starting the next version;
+the receiver selects no file and begins with an empty torrent client.
+
+With the original ICE configuration, both versions fail identically to receive
+bytes through public trackers or local WS signaling. Public WSS reports proxy
+tunnel and CA-trust errors. Local signaling exchanges offers/answers in both
+versions, but emits zero non-null ICE candidates and receives zero bytes.
+Read-only `chrome://policy` checks confirm the effective mandatory policy
+`WebRtcIPHandling=disable_non_proxied_udp`; audio/video capture is also disabled.
+A separate Node loopback UDP probe succeeds, so these results do not establish
+that the executor cannot use UDP at all.
+
+A controlled relay fixture then appends the same localhost-only authenticated
+TURN/TCP server to each version's existing RTC ICE servers, preserving all
+other options and mandatory policies. This is the TCP fallback supported by
+the [Chromium policy](https://chromium.googlesource.com/chromium/src/+/154.0.8037.57/components/policy/resources/templates/policy_definitions/WebRtc/WebRtcIPHandling.yaml).
+No network policy, global CA trust, media permission or browser security flag
+is changed. A private local WS tracker supplies signaling; this fixture is not
+the default public deployment path.
+
+Both versions complete real cross-browser WebTorrent transfers: the receiver
+downloads 65,536 bytes with the SHA-256 above, has a real peer, and both ends
+select a successful relay candidate pair with `relayProtocol=tcp` and positive
+sent/received bytes. The relay candidate's SDP `protocol=udp` describes the
+TURN server's local relay side, not a nonproxied browser UDP connection. Both
+matched original-config reruns and relay-fixture runs record zero page errors;
+the earlier two abort errors are not reproduced in these paired runs.
+
+This comparison found no P2P regression in the tested code change. It verifies
+the controlled TCP-relay path on both versions; public-tracker P2P remains
+unverified in this environment. All compared applications still use WebTorrent
+2.8.5. Reproduction harnesses, effective-policy screenshots, original and relay
+summaries, and the downloaded byte artifacts are retained with the task evidence.
+
+### WebTorrent update availability
+
+The November 4 registry/release check confirms manifest `^2.8.5`, lockfile and
+installed version 2.8.5, also the current Vite-aliased browser bundle version.
+It is the latest 2.x release. The latest stable release is
+[3.0.21](https://github.com/webtorrent/webtorrent/releases/tag/v3.0.21), published
+July 27, 2026. This is a major update outside the existing semver range; no
+WebTorrent manifest, lockfile or runtime version was changed for this check.
+
+Version 3 requires Node 22 or later, which the selected Node 24.22.1 satisfies.
+Its published artifact retains the ESM `dist/webtorrent.min.js` path, add/seed
+interfaces and asynchronous `file.blob()` API used here. Its changelog includes
+connection/port-exhaustion and rate/webseed fixes plus major protocol/piece
+dependency changes and a streamx pin. The tracker still requests vulnerable
+`ip`, so the scoped `@webpod/ip` replacement remains necessary; npm overrides
+do not rewrite precompiled browser bundles. These are static compatibility
+findings, not a 3.x installation or P2P test. The unused historical
+`public/webtorrent.min.js` embeds 1.9.7; the active application imports the npm
+bundle, and that historical file was left unchanged under the read-only check.
 
 Historical GitHub security-notification emails were checked against the current
 lockfile. They are not a live alert inventory. The repository's security page
