@@ -1,13 +1,61 @@
 # W2W release and rollback
 
-The confirmed SSH target is `zheyuan_wei2003@34.130.69.135`. Coordinate each
-server mutation with the task owner before executing a release or rollback.
+Set `DEPLOY_SERVER` explicitly to the SSH target, for example
+`zheyuan_wei2003@w2w.space`. There is no built-in IP address. When the domain's
+A record changes, SSH follows DNS; keep that record pointed at the real origin
+server rather than an HTTP-only proxy. Coordinate manual server mutations with
+the task owner; the configured Actions workflow authorizes releases on `main`.
 The server Compose directory has been confirmed as
 `/home/zheyuan_wei2003/CSCC09-24F-Project/remix`; scripts still require an explicit
 `DEPLOY_DIR` so operators can check the selected installation. The public health
 URL must be confirmed before release.
 These scripts do not change SSH authentication, QQ-bot services, certificates,
 the reverse proxy, Redis versions, or the production data schema.
+
+## GitHub Actions automation
+
+`.github/workflows/deploy.yml` runs on pushes to `main`, or through **Actions →
+Deploy W2W → Run workflow** with `main` selected. It validates the exact commit,
+builds an image, checks it with disposable Redis, publishes its commit tag, and
+deploys the resulting immutable digest with the existing backup/rollback and
+internal/public health checks. Only one production run proceeds at a time; an
+active release is not cancelled by a new push. Merging into `main` therefore
+authorizes an automatic production release.
+Pull requests targeting `main` run the application validation and shell syntax
+checks without deployment credentials; they never publish or change the server.
+
+Configure these repository **Actions variables** under **Settings → Secrets and
+variables → Actions → Variables**:
+
+| Variable | Value |
+| --- | --- |
+| `DEPLOY_SERVER` | SSH target, e.g. `zheyuan_wei2003@w2w.space` |
+| `DEPLOY_DIR` | `/home/zheyuan_wei2003/CSCC09-24F-Project/remix` after confirming the installation |
+| `RELEASE_HEALTH_URL` | `https://w2w.space/health` after confirming public routing |
+| `DEPLOY_KNOWN_HOSTS` | Trusted OpenSSH `known_hosts` line(s) matching the hostname in `DEPLOY_SERVER` |
+| `W2W_IMAGE_REPOSITORY` | Optional; defaults to `zheyuanwei/w2w` |
+
+Configure these repository **Actions secrets**:
+
+| Secret | Value |
+| --- | --- |
+| `DEPLOY_SSH_KEY` | Private deployment key already authorized for the server account; unencrypted for noninteractive CI |
+| `DOCKERHUB_USERNAME` | Docker Hub account with push access to the image repository |
+| `DOCKERHUB_TOKEN` | Docker Hub access token with the required push access |
+
+Verify the SSH host fingerprint through an existing trusted connection or the
+server console before saving `DEPLOY_KNOWN_HOSTS`; an unverified `ssh-keyscan`
+result alone does not establish trust. Store the private deployment key only in
+Secrets, never in a variable, source file or log. CI fails before building when
+required configuration or SSH access is missing. A DNS/IP change on the same
+host normally keeps the same host key; a replacement host requires independently
+verifying its new key and updating the pinned record.
+
+The server still needs the reviewed Compose file and runtime `.env` in place;
+the workflow deploys the application image and does not synchronize those files.
+For manual commands, export the same `DEPLOY_SERVER`, `DEPLOY_DIR` and
+`RELEASE_HEALTH_URL` values in your shell. Local validation/build/publish do not
+require `DEPLOY_SERVER`.
 
 ## Compatibility and release boundary
 

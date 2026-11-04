@@ -1,0 +1,146 @@
+name: Deploy W2W
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: remix/package-lock.json
+      - name: Install validation prerequisites
+        run: |
+          npm install --global npm@11.19.1
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends redis-server
+      - name: Validate release scripts and application
+        run: |
+          bash -n deploy-auto.sh remix/update.sh
+          ./deploy-auto.sh verify
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # PR validation must not occupy or replace a queued production release.
+    concurrency:
+      group: w2w-production
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DEPLOY_SERVER: ${{ vars.DEPLOY_SERVER }}
+      DEPLOY_DIR: ${{ vars.DEPLOY_DIR }}
+      RELEASE_HEALTH_URL: ${{ vars.RELEASE_HEALTH_URL }}
+      W2W_IMAGE_REPOSITORY: ${{ vars.W2W_IMAGE_REPOSITORY || 'zheyuanwei/w2w' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment configuration and SSH access
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_SERVER DEPLOY_DIR RELEASE_HEALTH_URL DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
+            if [[ -z ${!name} ]]; then
+              echo "::error::Configure the required Actions variable or secret: $name"
+              exit 1
+            fi
+          done
+          [[ "$DEPLOY_SERVER" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || { echo '::error::DEPLOY_SERVER must be user@hostname or user@IP'; exit 1; }
+          [[ "$DEPLOY_DIR" == /* ]] || { echo '::error::DEPLOY_DIR must be an absolute path'; exit 1; }
+          [[ "$RELEASE_HEALTH_URL" == https://* ]] || { echo '::error::RELEASE_HEALTH_URL must use HTTPS'; exit 1; }
+          install -d -m 700 "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          ssh-keygen -l -f "$HOME/.ssh/known_hosts" > /dev/null
+          ssh-keygen -F "${DEPLOY_SERVER#*@}" -f "$HOME/.ssh/known_hosts" > /dev/null
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 "$DEPLOY_SERVER" true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: remix/package-lock.json
+
+      - name: Install validation prerequisites
+        run: |
+          npm install --global npm@11.19.1
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends redis-server
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Verify exact commit and build image
+        run: ./deploy-auto.sh build
+
+      - name: Smoke test the image with disposable Redis
+        run: |
+          set -euo pipefail
+          network="w2w-smoke-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          app="$network-app"
+          redis="$network-redis"
+          cleanup() {
+            docker rm -f "$app" "$redis" > /dev/null 2>&1 || true
+            docker network rm "$network" > /dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network" > /dev/null
+          docker run -d --name "$redis" --network "$network" redis:7-alpine > /dev/null
+          docker run -d --name "$app" --network "$network" \
+            -e REDIS_HOST="$redis" -e REDIS_PORT=6379 \
+            -e SESSION_SECRET="$(openssl rand -hex 32)" \
+            "$W2W_IMAGE_REPOSITORY:$GITHUB_SHA" > /dev/null
+          docker exec "$app" node --input-type=module -e '
+            const revision = process.argv[1];
+            for (let attempt = 0; attempt < 60; attempt++) {
+              try {
+                const response = await fetch("http://127.0.0.1:3000/health", {signal: AbortSignal.timeout(2000)});
+                const health = await response.json();
+                if (response.ok && health.status === "ok" && health.version === revision) {
+                  const home = await fetch("http://127.0.0.1:3000/");
+                  if (home.ok && (await home.text()).includes("id=\"sidebar\"")) process.exit(0);
+                }
+              } catch {}
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            throw new Error("Image health/version or homepage smoke test failed");
+          ' "$GITHUB_SHA"
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Publish verified image and select immutable digest
+        run: |
+          set -euo pipefail
+          ./deploy-auto.sh publish
+          release_image=$(docker image inspect --format '{{json .RepoDigests}}' "$W2W_IMAGE_REPOSITORY:$GITHUB_SHA" |
+            node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const d=JSON.parse(s).find(x=>x.startsWith(process.argv[1]+"@sha256:"));if(!d)throw new Error("Published digest not found");process.stdout.write(d)})' "$W2W_IMAGE_REPOSITORY")
+          printf 'RELEASE_IMAGE=%s\n' "$release_image" >> "$GITHUB_ENV"
+
+      - name: Release application and verify public HTTPS version
+        env:
+          W2W_RELEASE_APPROVED: '1'
+        run: ./deploy-auto.sh release
+
+      - name: Remove runner SSH credentials
+        if: always()
+        run: rm -f "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
