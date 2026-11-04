@@ -1,8 +1,88 @@
 # Runtime, dependency migration and verification
 
 This report covers the maintained application in `remix/` and its committed
-lockfile. The historical `POC/` package is outside this runtime and audit scope.
+lockfile. The unused historical `POC/` package has been removed with the owner's
+authorization, leaving one maintained application package to audit.
 Deployment and rollback procedures are in [RELEASE.md](RELEASE.md).
+
+## November 4, 2026 security review
+
+This follow-up starts from remote `main` at `b4f1429`, rather than the older
+`work` checkout or an uncommitted patch in another workspace. The starting
+lockfile already contains `path-to-regexp` 0.1.13, the patched version for
+[GHSA-37ch-88jc-xwx2](https://github.com/advisories/GHSA-37ch-88jc-xwx2).
+Version 0.1.12 is still affected and must not replace it.
+
+A fresh npm audit found seven moderate package/meta-vulnerability entries, all
+from [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249):
+minimatch `>=7 <11.0.1`. Production-only audit already had zero entries.
+The affected copies were minimatch 9.0.9 under `@react-router/fs-routes`
+and 10.2.6 under `@typescript-eslint/typescript-estree`.
+
+The fix removes `@react-router/fs-routes` and declares the same 16 routes with
+the framework's `route`/`index` helpers. Before/after `react-router routes --json`
+outputs are byte-identical, including IDs, files, paths, ordering and hierarchy.
+This avoids forcing minimatch 11 into a consumer that calls `makeRe()`, an API
+removed in [minimatch 11](https://github.com/isaacs/minimatch/blob/v11.0.1/changelog.md).
+New route modules must now be registered in `app/routes.ts`.
+
+A scoped override upgrades only typescript-estree's minimatch to 11.0.1.
+That consumer uses the retained `minimatch(filePath, pattern, { dot: true })`
+interface. Real parser/project-service regression tests verify matching,
+nonmatching and hidden-file default-project behavior, including type information.
+The unrelated minimatch 3.1.5 consumers remain unchanged; this advisory does not
+include that version.
+
+Code review also reproduced a sharing defect: when a visitor received a file
+and then logged in, `mergeFiles` allocated a recipient-specific token instead of
+retaining the sender's shared token. Deleting the sender's history could then
+invalidate the original link even while the recipient retained the file.
+Login migration now moves existing server-owned records with their token and
+metadata, preserving the duplicate check. An isolated Redis regression failed
+before the fix and passes afterward; it also checks final-recipient deletion
+and account-file deduplication.
+
+Current checks run on Node 24.22.1 / npm 11.19.1:
+
+| Check | November 4 result |
+| --- | --- |
+| Frozen `npm ci --engine-strict` using the updated lockfile | Passed |
+| Full and production-only `npm audit --json` | Both zero known advisories |
+| Route manifest comparison | All 16 routes byte-identical |
+| Type generation and TypeScript | Passed |
+| ESLint with `--max-warnings=0` | Passed |
+| Production build | Passed; upstream future-flag and chunk-splitting notices remain |
+| Complete regression suite | 30 tests passed, zero failures/skips/cancellations |
+| Browser comparison against `b4f1429` | 44 screenshots / 22 pairs; 20 pairs pixel-identical, two differ only in the Monaco scrollbar; 28 interactions passed, zero page errors |
+| Client build artifact comparison | All 57 files byte-identical |
+| Docker image rebuild, real Google OAuth, cross-peer P2P, deployment | Not run in this follow-up |
+
+Browser checks used Chromium 154.0.8037.57 with identical fixed Redis fixtures,
+signed test sessions, locale/timezone and 1440x900 / 390x900 viewports. Both
+versions ran production builds against separate disposable Redis instances.
+The 11 checkpoints at each width cover dashboard, new-item menu, file details,
+favorite state, file editing, saved notes, empty file, Monaco editor, saved text
+with its real success notification, token reception and deletion confirmation.
+Interactions verify persisted favorites/notes/title, exact clipboard values,
+token reception and deletion cancellation. Screenshots used no masks or custom
+CSS; animations and the input caret were disabled for capture.
+
+All 11 narrow-viewport pairs are pixel-identical. The two desktop differences
+are each 815 pixels (0.063%) within the rightmost Monaco scrollbar strip,
+bounding box `[1426, 73, 1440, 862]`; image inspection confirms a scrollbar fade
+color difference without content, layout or success-notification changes.
+Existing narrow-screen horizontal overflow remains unchanged; full-page
+screenshots therefore extend past the 390px viewport. Actual upload and peer
+transfer were not exercised. The external visitor-count service returned 403
+for both versions, so its working appearance is not covered. No unexpected UI
+change was found in the observed states; this does not verify real Google login.
+
+Historical GitHub security-notification emails were checked against the current
+lockfile. They are not a live alert inventory. The repository's security page
+returned HTTP 404 in this environment, and the previously denied Dependabot API
+was not retried or bypassed. The zero counts above describe npm's current audit
+results; they do not establish that GitHub's live alert list is empty. No changes
+were pushed, merged or deployed.
 
 ## Versions and migration boundary
 

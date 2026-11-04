@@ -30,6 +30,8 @@ Tests start isolated Redis and production app processes, choose temporary ports/
 
 `npm start` runs the production build. Supply `SESSION_SECRET` securely (at least 32 characters) and Redis connection settings; production refuses the old public fallback secret. `/health` checks Redis and returns the embedded `APP_REVISION`. Production uses `server.mjs`; behind HTTPS termination, configure verified immediate proxy addresses in `TRUSTED_PROXY_CIDRS` and ensure the proxy overwrites forwarding headers. Untrusted peers cannot spoof protocol/host/port. Google login additionally needs the correct `GOOGLE_CLIENT_ID` and HTTPS access to Google's certificate endpoint. Browser WebTorrent requires a secure context (HTTPS or localhost) and working peer/tracker connectivity.
 
+Routes are registered explicitly in `app/routes.ts`; add new route modules there so their URLs and IDs remain part of the application.
+
 The npm scripts target the Linux development/deployment environment. Use WSL or an equivalent POSIX shell on Windows.
 
 See [compatibility and residual dependency advisories](../docs/COMPATIBILITY.md) and [release/rollback procedures](../docs/RELEASE.md). Container builds use the committed lockfile, exclude local secrets, and run as an unprivileged user. Do not use the historical cleanup/deployment commands to stop the entire host or prune rollback images.

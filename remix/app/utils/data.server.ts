@@ -400,7 +400,12 @@ export async function mergeFiles(
   const visitorFiles = await fileService.getAll(visitorId);
   console.log("Merging", visitorFiles.length, "files from", visitorId);
   await Promise.all(
-    visitorFiles.map((file) => fileService.create(userId, file)),
+    visitorFiles.map(async (file) => {
+      if (await fileService.get_dup(userId, file)) return;
+      // Move the existing server-owned record without allocating a new token.
+      // Received files may share a token whose mapping names the original sender.
+      await redis.hset(userFilesKey(userId), file.id, JSON.stringify(file));
+    }),
   );
   await redis.del(userFilesKey(visitorId));
   return fileService.getAll(userId);

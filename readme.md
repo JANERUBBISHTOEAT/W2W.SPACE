@@ -129,7 +129,7 @@ Retrieve text by entering the token code.
 
 ### Local development and validation
 
-Use Node.js **24.22.1**, npm **11.19.1**, and Redis. The maintained application is in `remix/`; `POC/` is historical.
+Use Node.js **24.22.1**, npm **11.19.1**, and Redis. The maintained application is in `remix/`; the obsolete `POC/` implementation has been removed.
 
 Follow the [development guide](remix/README.md) for a frozen dependency installation, explicit Redis ports, startup, and regression tests. The development server uses port **5173**. Production requires a securely configured session secret.
 
