@@ -17,6 +17,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        id: server-python
+        with:
+          # Exercise server-side code on the production Python minor version.
+          python-version: '3.8.18'
+          update-environment: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -28,6 +34,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends redis-server
       - name: Validate release scripts and application
+        env:
+          W2W_TEST_PYTHON: ${{ steps.server-python.outputs.python-path }}
         run: |
           bash -n deploy-auto.sh remix/update.sh
           ./deploy-auto.sh verify
@@ -53,6 +61,11 @@ jobs:
       W2W_IMAGE_REPOSITORY: ${{ vars.W2W_IMAGE_REPOSITORY || 'zheyuanwei/w2w' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        id: server-python
+        with:
+          python-version: '3.8.18'
+          update-environment: false
 
       - name: Validate deployment configuration and SSH access
         env:
@@ -99,6 +112,8 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Verify exact commit and build image
+        env:
+          W2W_TEST_PYTHON: ${{ steps.server-python.outputs.python-path }}
         run: ./deploy-auto.sh build
 
       - name: Smoke test the image with disposable Redis
@@ -147,7 +162,7 @@ jobs:
             node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{const d=JSON.parse(s).find(x=>x.startsWith(process.argv[1]+"@sha256:"));if(!d)throw new Error("Published digest not found");process.stdout.write(d)})' "$W2W_IMAGE_REPOSITORY")
           printf 'RELEASE_IMAGE=%s\n' "$release_image" >> "$GITHUB_ENV"
 
-      - name: Release application and verify public HTTPS version
+      - name: Release with automatic maintenance and verify public HTTPS version
         env:
           W2W_RELEASE_APPROVED: '1'
         run: ./deploy-auto.sh release

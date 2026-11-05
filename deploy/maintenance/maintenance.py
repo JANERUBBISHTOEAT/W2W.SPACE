@@ -68,6 +68,13 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def release_state_directory():
+    state_home = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state"))
+    result = Path(os.environ.get("W2W_RELEASE_STATE_DIR") or str(state_home / "w2w-releases"))
+    require(result.is_absolute(), "Expected an absolute release state directory")
+    return result
+
+
 def atomic(path, contents, mode=0o600, exclusive=False):
     require(not path.is_symlink(), "Refusing a symbolic link: " + path.name)
     descriptor, temporary = tempfile.mkstemp(prefix=".w2w-maintenance-", dir=path.parent)
@@ -103,6 +110,7 @@ class Maintenance:
         key = hashlib.sha256((str(self.work) + "\n" + args.host).encode()).hexdigest()[:16]
         self.key = key
         self.created_anchor_id = None
+        self.operation_token = getattr(args, "operation_token", None)
         self.name = "w2w-maintenance-" + key
         self.state = self.work / (".w2w-maintenance-" + key)
         require(not self.state.is_symlink() and (not self.state.exists() or self.state.is_dir()), "Unexpected maintenance state directory type")
@@ -112,14 +120,18 @@ class Maintenance:
         self.document = "__w2w_maintenance_" + key + ".html"
 
     def save(self, record, phase):
+        if self.operation_token:
+            require(record.get("operation_token") == self.operation_token, "Refusing to change another maintenance operation")
         if self.created_anchor_id:
             record["anchor_id"] = self.created_anchor_id
         record["phase"] = phase
         atomic(self.record, (json.dumps(record, indent=2) + "\n").encode())
 
-    def owned(self, record):
+    def owned(self, record, check_operation=True):
         require(record.get("host") == self.args.host and record.get("key") == self.key, "Maintenance record belongs to another installation")
         require(record.get("proxy_id") == self.proxy["id"], "The proxy container changed; review its identity before recovery")
+        if check_operation and self.operation_token:
+            require(record.get("operation_token") == self.operation_token, "Maintenance belongs to another operation")
 
     def preflight(self):
         self.proxy = inspect(self.args.proxy)
@@ -216,8 +228,9 @@ class Maintenance:
         return anchor_id
 
     def remove_anchor(self):
-        if self.anchor():
-            docker("rm", "-f", self.name)
+        anchor = self.anchor()
+        if anchor:
+            docker("rm", "-f", anchor["id"])
 
     def require_anchor(self):
         anchor = self.anchor()
@@ -269,6 +282,37 @@ class Maintenance:
             require(status == 503 and headers.get("retry-after") == "120" and headers.get("cache-control") == "no-store", "Public maintenance status/headers did not verify")
             require(hashlib.sha256(body).hexdigest() == digest(self.assets / "index.html"), "Public maintenance document differs from the selected page")
 
+    def verify_public(self, expected):
+        status, _, body = self.request()
+        require(status == 200 and json.loads(body) == {"status": "ok", "version": expected}, "Public application health/version did not verify after restore")
+
+    def restore_maintenance(self, record, hook=None):
+        """Restore only this operation's intact files, never a foreign window."""
+        self.owned(record)
+        require(self.assets.is_dir() and not self.assets.is_symlink() and
+                not (self.assets / "index.html").is_symlink() and
+                digest(self.assets / "index.html") == record["page_sha256"], "Maintenance assets cannot be restored safely")
+        if hook is None:
+            hook = (HERE / "location-override.conf").read_text().replace("__W2W_MAINTENANCE_DOCUMENT__", self.document).replace("__W2W_MAINTENANCE_DIRECTORY__", self.assets.name).encode()
+        require(hashlib.sha256(hook).hexdigest() == record["hook_sha256"], "Maintenance hook cannot be restored safely")
+        if self.hook.exists() or self.hook.is_symlink():
+            require(self.hook.is_file() and not self.hook.is_symlink() and digest(self.hook) == record["hook_sha256"], "Refusing to overwrite a changed hook while recovering maintenance")
+        else:
+            atomic(self.hook, hook, 0o644, exclusive=True)
+        anchor = self.anchor()
+        if not anchor:
+            self.created_anchor_id = None
+            record.pop("anchor_id", None)
+            self.save(record, "restoring-maintenance")
+            record["anchor_id"] = self.start()
+        elif not anchor["running"]:
+            docker("start", anchor["id"])
+        self.regenerate(True)
+        self.require_anchor()
+        self.check_maintenance()
+        self.require_anchor()
+        self.save(record, "disable-failed-maintenance-restored")
+
     def remove_hook(self, record):
         require(self.hook.is_file() and not self.hook.is_symlink() and digest(self.hook) == record["hook_sha256"], "Refusing to remove an altered or unowned maintenance hook")
         self.hook.unlink()
@@ -276,7 +320,7 @@ class Maintenance:
     def enable(self):
         if self.state.exists() and not self.state.is_symlink() and self.record.is_file() and not self.record.is_symlink():
             previous = json.loads(self.record.read_text())
-            self.owned(previous)
+            self.owned(previous, check_operation=False)
             require(previous.get("phase") in ("disabled", "enable-failed-restored") and not self.hook.exists() and self.anchor() is None, "Existing maintenance state requires inspection")
             if self.assets.exists():
                 require(not self.assets.is_symlink() and set(path.name for path in self.assets.iterdir()) == {"index.html"} and not (self.assets / "index.html").is_symlink() and digest(self.assets / "index.html") == previous["page_sha256"], "Refusing altered maintenance assets")
@@ -294,6 +338,8 @@ class Maintenance:
         record = {"host": self.args.host, "key": self.key, "proxy_id": self.proxy["id"], "proxy_image": IMAGE,
                   "proxy_ip": self.proxy_ip, "hook_sha256": hashlib.sha256(hook).hexdigest(),
                   "page_sha256": digest(page), "original_commit": (self.app or {}).get("env", {}).get("APP_REVISION"), "anchor": self.name}
+        if self.operation_token:
+            record["operation_token"] = self.operation_token
         self.save(record, "preparing")
         hook_installed = False
         try:
@@ -337,31 +383,24 @@ class Maintenance:
             self.remove_hook(record)
             self.remove_anchor()
             self.regenerate(False)
-            status, _, body = self.request()
-            require(status == 200 and json.loads(body) == {"status": "ok", "version": expected}, "Public application health/version did not verify after restore")
+            self.verify_public(expected)
+            # This durable commit is part of the protected unmask operation.
+            # A failure must restore 503, rather than escape after exposing app.
+            self.save(record, "disabled")
         except Exception:
-            if self.hook.exists() or self.hook.is_symlink():
-                require(self.hook.is_file() and not self.hook.is_symlink() and digest(self.hook) == record["hook_sha256"], "Refusing to overwrite a changed hook while recovering maintenance")
-            else:
-                atomic(self.hook, hook, 0o644, exclusive=True)
-            if not self.anchor():
-                record.pop("anchor_id", None)
-                self.save(record, "restoring-maintenance")
-                record["anchor_id"] = self.start()
-            elif not self.anchor()["running"]:
-                docker("start", self.name)
-            self.regenerate(True)
-            self.require_anchor()
-            self.check_maintenance()
-            self.require_anchor()
-            self.save(record, "disable-failed-maintenance-restored")
+            self.restore_maintenance(record, hook)
             raise
-        self.save(record, "disabled")
         # Keep the tiny non-secret recovery record/config. Remove only the owned
         # public page after normal application health is verified.
-        (self.assets / "index.html").unlink()
-        self.assets.rmdir()
-        return {"mode": "application", "version": expected, "record": str(self.record)}
+        result = {"mode": "application", "version": expected, "record": str(self.record)}
+        try:
+            (self.assets / "index.html").unlink()
+            self.assets.rmdir()
+        except OSError:
+            # Public health and durable commit already succeeded. Cleanup must
+            # never turn that success into a second application mutation.
+            result["cleanup_warning"] = "Verified application restored; owned maintenance assets need later cleanup"
+        return result
 
 
 def main():
@@ -391,9 +430,7 @@ def main():
         return
     os.umask(0o077)
     # Coordinate with the existing local release lock, without changing its flow.
-    state_home = Path(os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local/state"))
-    release_state = Path(os.environ.get("W2W_RELEASE_STATE_DIR") or str(state_home / "w2w-releases"))
-    require(release_state.is_absolute(), "Expected an absolute release state directory")
+    release_state = release_state_directory()
     release_state.mkdir(mode=0o700, parents=True, exist_ok=True)
     with (release_state / ".lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -14,7 +14,7 @@ Usage: ./deploy-auto.sh verify|build|publish|release|rollback
   verify   Require a clean checkout; install, typecheck, lint, test and build.
   build    Run verify, then build/load the linux/amd64 image tagged by full HEAD.
   publish  Push the verified local image; print its immutable registry digest.
-  release  Deploy RELEASE_IMAGE=repository@sha256:... to confirmed DEPLOY_DIR.
+  release  Deploy the immutable image inside an automatic maintenance window.
   rollback Restore RELEASE_RECORD from a previous deployment on that server.
 
 release/rollback require W2W_RELEASE_APPROVED=1 after operator coordination.
@@ -49,6 +49,7 @@ verify() {
     npm run build
     npm test
   )
+  "${W2W_TEST_PYTHON:-python3}" -m unittest discover -s "$repo_dir/deploy/maintenance" -p 'test_*_unit.py'
   clean_revision
   [[ $revision == "$expected_revision" ]] || fail 'HEAD changed during validation.'
   printf '%s\n' "$revision" > "$verification_file"
@@ -78,6 +79,69 @@ run_remote() {
   ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$deploy_target" "$command" < "$repo_dir/remix/update.sh"
 }
 
+run_bundle_remote() (
+  # Build/publish have already finished. These are public source files, never .env
+  # or credentials. A unique, bounded bundle cannot overwrite the server checkout.
+  local transfer_dir metadata_file bundle_file bootstrap_file command result
+  transfer_dir=$(mktemp -d)
+  trap 'rm -rf -- "$transfer_dir"' EXIT
+  metadata_file="$transfer_dir/metadata.json"
+  bundle_file="$transfer_dir/release.tar"
+  bootstrap_file="$transfer_dir/bootstrap.py"
+  python3 "$repo_dir/deploy/maintenance/package.py" --revision "$revision" --output "$bundle_file" > "$metadata_file"
+  python3 - "$repo_dir" "$revision" "$bootstrap_file" <<'PY'
+from pathlib import Path
+import subprocess
+import sys
+
+repo, revision, output = sys.argv[1:]
+name = "deploy/maintenance/bootstrap.py"
+entry = subprocess.check_output(["git", "-C", repo, "ls-tree", "-z", revision, "--", name]).split(b"\0")
+if len(entry) != 2 or entry[1] != b"":
+    raise SystemExit("Missing receiver source")
+header, path = entry[0].split(b"\t", 1)
+mode, kind, oid = header.split()
+if path.decode() != name or kind != b"blob" or mode not in (b"100644", b"100755"):
+    raise SystemExit("Receiver source must be a regular Git blob")
+body = subprocess.check_output(["git", "-C", repo, "cat-file", "blob", oid.decode()])
+if len(body) > 524288:
+    raise SystemExit("Receiver source exceeds size limit")
+with Path(output).open("xb") as stream:
+    stream.write(body)
+PY
+  command=$(python3 - "$metadata_file" "$bootstrap_file" "$DEPLOY_DIR" "$RELEASE_HEALTH_URL" "$RELEASE_IMAGE" "$revision" <<'PY'
+import json
+from pathlib import Path
+import re
+import shlex
+import sys
+from urllib.parse import urlsplit
+
+metadata_path, bootstrap_path, compose_dir, health_url, image, revision = sys.argv[1:]
+url = urlsplit(health_url)
+if not (url.scheme == "https" and url.hostname and re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", url.hostname)
+        and url.port in (None, 443) and not url.username and not url.password
+        and url.path == "/health" and not url.query and not url.fragment):
+    raise SystemExit("RELEASE_HEALTH_URL must be the confirmed https://DNS-host/health URL")
+metadata = json.loads(Path(metadata_path).read_text())
+if metadata["revision"] != revision:
+    raise SystemExit("Bundle revision mismatch")
+command = ["env", "W2W_RELEASE_APPROVED=1", "PYTHONDONTWRITEBYTECODE=1", "python3", "-c", Path(bootstrap_path).read_text(),
+           "--compose-dir", compose_dir, "--host", url.hostname, "--image", image, "--revision", revision,
+           "--archive-sha256", metadata["archive_sha256"], "--manifest-sha256", metadata["manifest_sha256"]]
+print(shlex.join(command))
+PY
+  )
+  result=0
+  ssh -o BatchMode=yes -o StrictHostKeyChecking=yes "$deploy_target" "$command" < "$bundle_file" || result=$?
+  if (( result == 255 )); then
+    printf '%s\n' 'SSH transport ended without a confirmed result. Inspect the server transaction before any retry; this command will not resend the release.' >&2
+  elif (( result != 0 )); then
+    printf '%s\n' 'Release did not complete successfully. Review the server result: recovery may have restored the prior version or retained maintenance.' >&2
+  fi
+  return "$result"
+)
+
 case "$action" in
   help|-h|--help) usage ;;
   verify) verify ;;
@@ -104,16 +168,7 @@ case "$action" in
     require_verified
     [[ ${RELEASE_IMAGE:-} =~ ^[a-z0-9][a-z0-9./:_-]*@sha256:[0-9a-f]{64}$ ]] || fail 'RELEASE_IMAGE must be an immutable registry digest.'
     [[ ${RELEASE_HEALTH_URL:-} == https://* ]] || fail 'Set the confirmed HTTPS RELEASE_HEALTH_URL.'
-    run_remote release "$DEPLOY_DIR" "$RELEASE_IMAGE" "$revision"
-    for attempt in {1..12}; do
-      if curl --proto '=https' --fail --silent --show-error --max-time 10 "$RELEASE_HEALTH_URL" |
-        node -e 'let s="";process.stdin.on("data",x=>s+=x);process.stdin.on("end",()=>{try{const j=JSON.parse(s);if(j.status!=="ok"||j.version!==process.argv[1])process.exit(1)}catch{process.exit(1)}})' "$revision"; then
-        printf 'Release verified through HTTPS: %s\n' "$revision"
-        exit 0
-      fi
-      sleep 2
-    done
-    fail 'External health/version verification failed. The local app passed; coordinate rollback using the printed release record.'
+    run_bundle_remote
     ;;
   rollback)
     require_coordinated_release

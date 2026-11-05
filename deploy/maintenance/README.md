@@ -1,8 +1,10 @@
-# Optional maintenance page
+# Maintenance page and automatic release windows
 
 This host-local tool serves `index.html` from the existing nginx proxy while the
-application is stopped or removed. It is opt-in: adding these files does not
-change Actions, the release script, Compose, or production services.
+application is stopped or removed. `deploy-auto.sh release` and the main Actions
+deployment automatically manage a maintenance window. Building and publishing
+leave the site available. Merely opening the HTML or adding these files never
+switches a running site into maintenance.
 
 The supported installation is the reviewed nginx-proxy image
 `jwilder/nginx-proxy@sha256:dd563441c6037b0faaede052359731eef319d2eb465d11e089dc4a4c4d499c04`,
@@ -11,10 +13,13 @@ and the existing `certs`, `vhost` and `html` bind directories beside Compose.
 Custom virtual paths, root location overrides, certificate selection, or another
 container advertising this host stop the operation for separate review.
 
-The tool only queries non-secret routing metadata; it never reads `.env`, TLS
+The standalone `maintenance.py` tool only queries non-secret routing metadata; it never reads `.env`, TLS
 private keys, Redis data, or deployment credentials. It never pulls/builds an
 image, recreates the proxy, changes trusted proxy addresses, or replaces the app,
-Redis or ACME containers. Run it on the confirmed server through the established
+Redis or ACME containers. The automatic coordinator additionally runs the
+existing app updater, which reads protected runtime configuration and changes
+only the persisted app image selection; it never logs configuration values.
+Run manual maintenance commands on the confirmed server through the established
 strict SSH connection to its **DNS hostname**. These commands do not establish
 SSH trust or copy files to the server.
 
@@ -85,12 +90,24 @@ containers require inspection and are never blindly deleted.
 
 ## Release coordination and failures
 
-**Existing Actions and `deploy-auto.sh release` expect public `/health` to return
-200 with the deployed commit. They therefore cannot complete normally while
-maintenance remains enabled.** This tool does not bypass that check or pretend
-that maintenance is healthy, and does not automatically modify the workflow.
+`deploy-auto.sh release` sends the tested source from the exact verified commit
+to a new private server staging directory. `auto_release.py` holds one shared
+lock for the complete window and gives the updater a verified inherited lock
+descriptor. It records operation ownership before enabling maintenance and uses
+only its own updater result and rollback record. An existing manual window or
+unfinished foreign operation is refused, without removing its hook or anchor.
 
-A separately coordinated operator can use this explicit sequence:
+The sequence is: verify the current installation, enable and confirm the 503
+page, run the fresh Redis backup/restore rehearsal and image update, verify
+internal health and persisted image, restore routing, and confirm public HTTPS
+health/version. A failed target is rolled back to the actual prior runtime;
+the window closes only after that prior version is healthy publicly. Failed
+recovery keeps maintenance enabled and exits unsuccessfully. Application
+rollback does not restore old Redis data. See [release instructions](../../docs/RELEASE.md)
+for transfer validation, unknown transport outcomes and interrupted transactions.
+
+The following manual sequence remains available for a separately coordinated
+window. Do not run automatic release inside a manually enabled window:
 
 1. Validate/build/test/publish the intended exact commit through the existing
    release procedure. Retain its immutable image digest and previous image.
@@ -134,6 +151,22 @@ The maintenance document cannot prevent clients with existing P2P connections
 from continuing transfers already established between them.
 
 ## Local verification
+
+The deterministic controller/transport unit tests are also part of
+`deploy-auto.sh verify` and require no Docker or production access:
+
+```sh
+python3 -m unittest discover -s deploy/maintenance -p 'test_*_unit.py'
+```
+
+The automatic-release rehearsal uses real disposable Docker/Compose services,
+TLS with a local CA, a private loopback registry and synthetic Redis data. Run
+it separately with an evidence directory; it never targets production:
+
+```sh
+python3 deploy/maintenance/test_auto_release.py \
+  --evidence-dir /workspace/w2w-auto-maintenance-rehearsal
+```
 
 ```sh
 python3 deploy/maintenance/test_maintenance.py \
