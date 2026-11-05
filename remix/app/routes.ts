@@ -12,6 +12,7 @@ export default [
   route("api/new/text", "routes/api.new.text.tsx"),
   route("token/:token", "routes/token.$token.tsx"),
   route("api/restore", "routes/api.restore.tsx"),
+  route("api/auth/google/challenge", "routes/api.auth.google.challenge.ts"),
   route("text-editor", "routes/text-editor.tsx"),
   route("api/files", "routes/api.files.tsx"),
   route("deleted", "routes/deleted.tsx"),

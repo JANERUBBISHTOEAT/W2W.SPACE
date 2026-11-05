@@ -139,7 +139,7 @@ export async function startRedis() {
 }
 
 /** Starts the built production application against its own disposable Redis. */
-export async function startApplication({ trustedProxyCIDRs = "" } = {}) {
+export async function startApplication({ trustedProxyCIDRs = "", nodeImports = [] } = {}) {
   await access(join(appDirectory, "build/server/index.js"));
   const redis = await startRedis();
   const sessionSecret = randomBytes(32).toString("hex");
@@ -156,6 +156,9 @@ export async function startApplication({ trustedProxyCIDRs = "" } = {}) {
     const port = await unusedPort();
     const baseURL = `http://127.0.0.1:${port}`;
     process = startProcess(globalThis.process.execPath, [
+      // Test-owned preloads may replace external certificate retrieval without
+      // introducing a token-acceptance hook into the application itself.
+      ...nodeImports.flatMap((specifier) => ["--import", specifier]),
       join(appDirectory, "server.mjs"),
     ], {
       cwd: appDirectory,
