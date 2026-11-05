@@ -1,6 +1,6 @@
 import { toast } from "sonner";
 
-// @types/webtorrent describes the pre-v2 callback API. Keep the browser v2
+// @types/webtorrent describes the pre-v2 callback API. Keep the current browser
 // Promise-based file API explicit at this boundary instead of using `any`.
 export interface BrowserTorrentFile {
   readonly name: string;
