@@ -135,6 +135,12 @@ Follow the [development guide](remix/README.md) for a frozen dependency installa
 
 See [compatibility findings](docs/COMPATIBILITY.md) for tested versions and remaining upstream advisories, and [release/rollback instructions](docs/RELEASE.md) before publishing. Release tooling validates the exact commit and replaces only the application service.
 
+GitHub Actions automatically runs that release pipeline on pushes to `main` and
+supports manual runs from the Actions tab. Set the SSH address with the
+`DEPLOY_SERVER` environment variable (for example, `user@w2w.space`); no server IP
+is embedded in the deployment script. See the [Actions configuration](docs/RELEASE.md#github-actions-automation)
+for the required repository variables, registry credentials and trusted SSH key.
+
 ---
 
 ## 🛠️ Tech Stack

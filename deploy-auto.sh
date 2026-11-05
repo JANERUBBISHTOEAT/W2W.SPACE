@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publishing and server changes require separate explicit invocations.
+# Publishing and server changes use separate invocations, including in CI.
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 action=${1:-help}
 image_repository=${W2W_IMAGE_REPOSITORY:-zheyuanwei/w2w}
-deploy_target=${DEPLOY_TARGET:-zheyuan_wei2003@34.130.69.135}
+deploy_target=${DEPLOY_SERVER:-}
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 usage() {
@@ -18,6 +18,7 @@ Usage: ./deploy-auto.sh verify|build|publish|release|rollback
   rollback Restore RELEASE_RECORD from a previous deployment on that server.
 
 release/rollback require W2W_RELEASE_APPROVED=1 after operator coordination.
+DEPLOY_SERVER must be explicitly set to the SSH user@hostname (or user@IP).
 DEPLOY_DIR must be the discovered absolute directory containing Compose and .env.
 release also requires RELEASE_HEALTH_URL=https://<confirmed-domain>/health.
 No SSH keys, host trust, bot services, proxy or Redis upgrades are managed here.
@@ -62,8 +63,9 @@ require_verified() {
 
 require_coordinated_release() {
   [[ ${W2W_RELEASE_APPROVED:-} == 1 ]] || fail 'Coordinate the server change, then set W2W_RELEASE_APPROVED=1.'
+  [[ -n $deploy_target ]] || fail 'Set DEPLOY_SERVER to the SSH user@hostname before deploying.'
   [[ ${DEPLOY_DIR:-} == /* ]] || fail 'Set DEPLOY_DIR to the discovered absolute Compose directory.'
-  [[ $deploy_target =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || fail 'Invalid DEPLOY_TARGET.'
+  [[ $deploy_target =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || fail 'Invalid DEPLOY_SERVER; expected user@hostname or user@IP.'
 }
 
 run_remote() {
