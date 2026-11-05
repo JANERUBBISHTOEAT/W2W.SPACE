@@ -56,12 +56,17 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
+          missing_configuration=0
           for name in DEPLOY_SERVER DEPLOY_DIR RELEASE_HEALTH_URL DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DOCKERHUB_USERNAME DOCKERHUB_TOKEN; do
             if [[ -z ${!name} ]]; then
               echo "::error::Configure the required Actions variable or secret: $name"
-              exit 1
+              missing_configuration=1
             fi
           done
+          if (( missing_configuration )); then
+            echo '::error::Set variables under repository Actions Variables and credentials under Repository secrets. This job does not select a GitHub Environment.'
+            exit 1
+          fi
           [[ "$DEPLOY_SERVER" =~ ^[A-Za-z0-9_.-]+@[A-Za-z0-9.-]+$ ]] || { echo '::error::DEPLOY_SERVER must be user@hostname or user@IP'; exit 1; }
           [[ "$DEPLOY_DIR" == /* ]] || { echo '::error::DEPLOY_DIR must be an absolute path'; exit 1; }
           [[ "$RELEASE_HEALTH_URL" == https://* ]] || { echo '::error::RELEASE_HEALTH_URL must use HTTPS'; exit 1; }
