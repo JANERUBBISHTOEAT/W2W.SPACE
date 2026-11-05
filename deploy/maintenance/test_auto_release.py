@@ -213,6 +213,12 @@ def pull_failure(case):
         result = case.auto("b")
     finally:
         docker("start", case.suite.registry)
+        actual_port = int(docker("inspect", "--format", '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}', case.suite.registry).stdout)
+        assert actual_port == case.suite.port
+        import urllib.request
+        def registry_ready():
+            with urllib.request.urlopen("http://127.0.0.1:%s/v2/" % actual_port, timeout=1) as response:assert response.status == 200
+        case.eventually(registry_ready)
     assert result["exit_code"] != 0 and not result["committed"]
     assert case.inspect(case.app, "{{json .Id}}") == initial
     assert_off(case, A, "a")

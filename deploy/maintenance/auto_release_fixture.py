@@ -112,11 +112,14 @@ class Images:
         for kind, name in (("network", self.registry_network), ("volume", self.registry_volume)):
             docker(kind, "create", "--label", "space.w2w.auto-release.fixture=" + self.id, name)
             self.created.append((kind, name))
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0));selected_port = probe.getsockname()[1]
         docker("run", "-d", "--name", self.registry, "--pull", "never", "--network", self.registry_network,
-               "--label", "space.w2w.auto-release.fixture=" + self.id, "--publish", "127.0.0.1::5000",
+               "--label", "space.w2w.auto-release.fixture=" + self.id, "--publish", "127.0.0.1:%s:5000" % selected_port,
                "--mount", "type=volume,src=" + self.registry_volume + ",dst=/var/lib/registry", "registry:2")
         self.created.append(("container", self.registry))
         self.port = int(docker("inspect", "--format", '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}', self.registry).stdout)
+        assert self.port == selected_port
         for attempt in range(50):
             try:
                 with urllib.request.urlopen("http://127.0.0.1:%s/v2/" % self.port, timeout=1) as response:
