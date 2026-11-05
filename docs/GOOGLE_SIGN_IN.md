@@ -29,6 +29,14 @@ client requests a fresh challenge instead of restoring the old one.
 The existing Redis application connection must allow `SET` and `EVAL`; restricted
 ACLs are not modified by the application and fail closed with HTTP 503.
 
+The challenge preflight is a component-owned, same-origin request rather than a
+router action submission. Network rejection, HTML proxy errors, invalid JSON,
+invalid challenge fields and a ten-second request/body timeout stay inside the
+login area with a Retry control. File receiving, share-token lookup and search
+remain usable. Replacing or unmounting the request aborts it and invalidates its
+generation so a late response cannot replace a newer challenge. This does not
+relax server-side credential, origin, session-binding or consumption checks.
+
 GoogleLogin is remounted when a challenge changes because version 0.12.2 of
 `@react-oauth/google` does not reinitialize GIS when only the nonce prop changes.
 The provider stays mounted. Expired challenges and rejected login callbacks
@@ -53,6 +61,15 @@ isolated Redis, ephemeral RSA-signed test tokens and a test-process-only Google
 certificate provider. Production code has no test credential bypass. These tests
 cover the browser/session and atomic replay boundaries but do not substitute for
 a real Google popup/FedCM login on an authorized device.
+
+`npm run test:browser` runs the built application with its own disposable Redis
+and a stubbed GIS script. Install the browser first with
+`npx playwright install --with-deps chromium`; an existing local Chromium can be
+selected with `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. These regression tests cover
+initial/renewal transport failures, malformed responses, recovery by Retry
+without a page reload, and continued token lookup/search. PR verification runs
+this suite after the normal build and HTTP tests. All external browser requests
+are intercepted, and these tests do not authenticate a Google account.
 
 Primary references:
 

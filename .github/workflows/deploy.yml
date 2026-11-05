@@ -31,6 +31,12 @@ jobs:
         run: |
           bash -n deploy-auto.sh remix/update.sh
           ./deploy-auto.sh verify
+      - name: Install browser test runtime
+        working-directory: remix
+        run: npx playwright install --with-deps chromium
+      - name: Validate Google login browser recovery
+        working-directory: remix
+        run: npm run test:browser
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
