@@ -1,4 +1,4 @@
-import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
+import { GoogleOAuthProvider } from "@react-oauth/google";
 import type { CredentialResponse } from "@react-oauth/google";
 import {
   type ActionFunctionArgs,
@@ -16,6 +16,9 @@ import { mergeTexts } from "~/utils/text.server";
 import { prettyBytes } from "~/utils/functions";
 import HashMap from "~/utils/hashmap.server";
 import { verifyGoogleCredential } from "~/utils/google-auth.server";
+import { consumeGoogleLoginChallenge, isGoogleLoginNonce } from "~/utils/google-login-challenge.server";
+import { isSameSiteRequest } from "~/utils/request-origin.server";
+import GoogleLoginWithNonce from "~/components/GoogleLoginWithNonce";
 import type { SessionIdentity } from "~/utils/session.server";
 import {
   commitSession,
@@ -30,7 +33,7 @@ import type { BrowserTorrentFile } from "~/utils/webtorrent.client";
 interface HomeActionData {
   user?: SessionIdentity | null;
   error?: string;
-  intent?: "acquireMagnet" | "acquireToken";
+  intent?: "acquireMagnet" | "acquireToken" | "OAuthCallback";
   type?: "text" | "file" | null;
   textId?: string;
   fileId?: string;
@@ -48,36 +51,35 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const intent = formData.get("intent");
 
   if (intent === "OAuthCallback") {
-    // Prevent login CSRF: a cross-site form must not sign another browser in.
-    // Compare hosts because HTTPS may terminate at the deployment proxy while
-    // Remix receives HTTP internally. Never accept an absent/opaque Origin.
-    const origin = request.headers.get("Origin");
-    let sameHost = false;
-    try {
-      if (origin) {
-        const originUrl = new URL(origin);
-        sameHost = (originUrl.protocol === "http:" || originUrl.protocol === "https:") && originUrl.host === new URL(request.url).host;
-      }
-    } catch {
-      // Invalid Origin is rejected below.
-    }
-    if (!sameHost || request.headers.get("Sec-Fetch-Site") === "cross-site") {
-      return data({ error: "Login must originate from this site" }, { status: 403 });
+    const failure = (error: string, status: number) => data({ error, intent: "OAuthCallback" as const }, { status });
+    if (!isSameSiteRequest(request)) {
+      return failure("Login must originate from this site", 403);
     }
     const audience = process.env.GOOGLE_CLIENT_ID;
     if (!audience) {
-      return data({ error: "Google login is not configured" }, { status: 503 });
+      return failure("Google login is not configured", 503);
     }
     const credential = formData.get("credential");
     if (typeof credential !== "string" || !credential) {
-      return data({ error: "Google credential is required" }, { status: 400 });
+      return failure("Google credential is required", 400);
     }
+    const nonce = formData.get("nonce");
+    if (!isGoogleLoginNonce(nonce)) return failure("Please restart Google login", 401);
 
     let identity: SessionIdentity;
     try {
-      identity = await verifyGoogleCredential(credential, audience);
+      identity = await verifyGoogleCredential(credential, audience, nonce);
     } catch {
-      return data({ error: "Google login could not be verified" }, { status: 401 });
+      return failure("Google login could not be verified", 401);
+    }
+    try {
+      if (!await consumeGoogleLoginChallenge(request, nonce)) {
+        return failure("Google login expired or was already used. Please try again.", 401);
+      }
+    } catch {
+      // A timed-out consume might already have executed. Never restore a nonce
+      // or merge history on an uncertain outcome; start a fresh challenge.
+      return failure("Google login is temporarily unavailable. Please try again.", 503);
     }
 
     const session = await getSession(request);
@@ -139,6 +141,7 @@ export default function Index() {
   const { submit: restore, state: restoreState, data: restoreData } = restoreFetcher;
   const restoreHandledRef = useRef(false);
   const [user, setUser] = useState<SessionIdentity | null>(initialUser);
+  const [googleLoginRetry, setGoogleLoginRetry] = useState(0);
   const handledDataRef = useRef<HomeActionData>();
   const shownMessageKeyRef = useRef<string>();
   const handledTokenRef = useRef<string>();
@@ -232,6 +235,7 @@ export default function Index() {
     if (data.error) {
       handledDataRef.current = data;
       toast.error(data.error);
+      if (data.intent === "OAuthCallback") setGoogleLoginRetry((version) => version + 1);
       return;
     }
     if ("user" in data) {
@@ -314,12 +318,12 @@ export default function Index() {
     return () => { cancelled = true; };
   }, [data, navigate, submit]);
 
-  const handleLogin = (response: CredentialResponse) => {
+  const handleLogin = (response: CredentialResponse, nonce: string) => {
     if (!response.credential) {
       toast.error("Google did not return a login credential.");
       return;
     }
-    submit({ intent: "OAuthCallback", credential: response.credential }, { method: "POST", action: "." });
+    submit({ intent: "OAuthCallback", credential: response.credential, nonce }, { method: "POST", action: "." });
   };
 
   return (
@@ -350,7 +354,7 @@ export default function Index() {
           <GoogleOAuthProvider clientId={googleClientId}>
             <div className="login-button">
               <p>log in to sync file history:</p>
-              <GoogleLogin onSuccess={handleLogin} onError={() => toast.error("Google login failed.")} />
+              <GoogleLoginWithNonce onSuccess={handleLogin} retryVersion={googleLoginRetry} />
             </div>
           </GoogleOAuthProvider>
         ) : null}

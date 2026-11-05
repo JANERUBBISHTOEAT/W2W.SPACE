@@ -6,6 +6,7 @@ const googleAuth = new OAuth2Client();
 export async function verifyGoogleCredential(
   credential: string,
   audience: string,
+  nonce: string,
 ): Promise<SessionIdentity> {
   // Reject malformed/unsigned input before the library fetches certificates.
   // Decoding the header is only an early rejection check, never authentication.
@@ -22,6 +23,7 @@ export async function verifyGoogleCredential(
   const ticket = await googleAuth.verifyIdToken({ idToken: credential, audience });
   const payload = ticket.getPayload();
   if (!payload?.sub) throw new Error("Missing Google subject");
+  if (!nonce || payload.nonce !== nonce) throw new Error("Google login nonce does not match");
   return {
     sub: payload.sub,
     name: payload.name,
