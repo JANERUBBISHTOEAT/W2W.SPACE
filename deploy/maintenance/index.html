@@ -18,17 +18,17 @@
       --line: #e3e3e3;
       --paper: #f7f7f7;
       --yellow: #fecc1b;
-      --band-height: 128px;
+      --band-height: min(128px, 14%);
       --stripe-size: 128px;
     }
     *, *::before, *::after { box-sizing: border-box; }
-    html { min-height: 100%; background: var(--paper); }
+    html { height: 100%; overflow: hidden; background: var(--paper); }
     body {
-      min-height: 100vh;
-      min-height: 100svh;
+      height: 100%;
+      overflow: hidden;
       margin: 0;
       display: grid;
-      grid-template-rows: var(--band-height) 1fr var(--band-height);
+      grid-template-rows: var(--band-height) minmax(0, 1fr) var(--band-height);
       color: var(--ink);
       font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
         "Helvetica Neue", sans-serif;
@@ -37,7 +37,8 @@
     .tape {
       position: relative;
       width: 100%;
-      height: var(--band-height);
+      height: 100%;
+      min-height: 0;
       overflow: hidden;
       background: var(--yellow);
     }
@@ -53,9 +54,15 @@
     .tape--bottom::before { animation-direction: reverse; }
     @keyframes tape-slide { to { transform: translateX(calc(-1 * var(--stripe-size))); } }
     .page {
+      position: relative;
       align-self: center;
       justify-self: center;
       width: min(calc(100% - 48px), 552px);
+      min-height: 0;
+      max-height: 100%;
+      overflow-x: hidden;
+      overflow-y: auto;
+      overscroll-behavior-y: contain;
       padding: 32px 0;
     }
     .brand { display: flex; justify-content: center; margin-bottom: 24px; }
@@ -114,7 +121,7 @@
     }
     .refresh:hover { border-color: #b8b8b8; background: #fafafa; }
     .refresh svg { flex: none; width: 15px; height: 15px; }
-    .refresh:focus-visible, #pause-motion:focus-visible ~ .page .motion-control {
+    .refresh:focus-visible, .motion-control:focus-within {
       outline: 2px solid #146fd1;
       outline-offset: 4px;
     }
@@ -126,6 +133,7 @@
       gap: 8px 16px;
       min-height: 44px;
       margin-top: 12px;
+      margin-inline: 6px;
       color: var(--muted);
       font-size: 12px;
     }
@@ -140,9 +148,18 @@
       user-select: none;
       touch-action: manipulation;
     }
-    .motion-box { width: 12px; height: 12px; border: 1px solid #8a8a8a; border-radius: 3px; }
-    #pause-motion:checked ~ .tape::before { animation-play-state: paused; }
-    #pause-motion:checked ~ .page .motion-box { background: var(--ink); border-color: var(--ink); box-shadow: inset 0 0 0 2px #fff; }
+    .motion-control input {
+      width: 14px;
+      height: 14px;
+      margin: 0;
+      accent-color: var(--ink);
+      scroll-margin-block: 16px;
+    }
+    body:has(#pause-motion:checked) .tape::before { animation-play-state: paused; }
+    @supports not selector(body:has(input:checked)) {
+      .tape::before { animation: none; }
+      .motion-control { display: none; }
+    }
     .reduced-motion-note { display: none; }
     .visually-hidden {
       position: absolute;
@@ -155,15 +172,30 @@
       border: 0;
     }
     @media (max-width: 480px) {
-      :root { --band-height: 104px; --stripe-size: 112px; }
+      :root { --band-height: min(104px, 14%); --stripe-size: 112px; }
       .page { width: calc(100% - 40px); padding: 24px 0; }
       .brand { margin-bottom: 20px; }
       .brand img { width: 169px; height: 52px; }
       .content { padding: 28px 24px; }
       .message { font-size: 14px; }
     }
-    @media (max-height: 650px) {
-      .page { padding-top: 20px; padding-bottom: 20px; }
+    @media (max-height: 750px) {
+      .page { padding-top: 16px; padding-bottom: 16px; }
+      .brand { margin-bottom: 16px; }
+      .content { padding-top: 24px; padding-bottom: 24px; }
+      .eyebrow { margin-bottom: 12px; }
+      .message { margin-top: 12px; margin-bottom: 18px; line-height: 1.65; }
+      .page-footer { margin-top: 4px; }
+    }
+    @media (max-height: 520px) {
+      .page { padding-top: 12px; padding-bottom: 12px; }
+      .brand { margin-bottom: 8px; }
+      .brand img { width: 143px; height: 44px; }
+      .content { padding-top: 16px; padding-bottom: 16px; }
+      .eyebrow { margin-bottom: 8px; font-size: 10px; }
+      h1 { font-size: clamp(22px, 4vw, 28px); }
+      .message { margin-top: 10px; margin-bottom: 14px; font-size: 13px; line-height: 1.5; }
+      .page-footer { margin-top: 0; font-size: 11px; }
     }
     @media (prefers-reduced-motion: reduce) {
       .tape::before { animation: none; }
@@ -171,15 +203,15 @@
       .reduced-motion-note { display: inline; }
     }
     @media print {
-      body { min-height: auto; }
+      html, body { height: auto; overflow: visible; }
+      body { --band-height: 64px; }
+      .page { max-height: none; overflow: visible; }
       .tape::before { animation: none; }
       #pause-motion, .motion-control, .refresh { display: none; }
     }
   </style>
 </head>
 <body>
-  <input class="visually-hidden" type="checkbox" id="pause-motion" aria-label="Pause animation" aria-describedby="motion-description">
-  <span class="visually-hidden" id="motion-description">Stop the yellow and black bands moving.</span>
   <div class="tape tape--top" aria-hidden="true"></div>
   <main class="page" aria-labelledby="maintenance-title">
     <header class="brand">
@@ -198,7 +230,8 @@
     </section>
     <footer class="page-footer">
       <span class="domain">w2w.space</span>
-      <label class="motion-control" for="pause-motion"><span class="motion-box" aria-hidden="true"></span>Pause animation</label>
+      <label class="motion-control"><input type="checkbox" id="pause-motion" aria-describedby="motion-description"><span>Pause animation</span></label>
+      <span class="visually-hidden" id="motion-description">Stop the yellow and black bands moving.</span>
       <span class="reduced-motion-note">Reduced motion enabled</span>
     </footer>
   </main>
