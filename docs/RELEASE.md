@@ -92,6 +92,12 @@ require `DEPLOY_SERVER`.
 - The normal release swaps only `remix`, so a brief application restart is
   expected. Proxy and Redis remain running. This is not a zero-downtime rollout.
 
+An optional independent [maintenance page](../deploy/maintenance/README.md) is
+available for separately coordinated windows. It is not enabled by Actions or
+the normal release command. Maintenance deliberately returns HTTP 503, including
+on `/health`; follow its explicit enable, internal release and verified restore
+sequence instead of bypassing the existing public health check.
+
 ## Read-only discovery and prerequisites
 
 Before approving mutations, establish the real absolute Compose directory,
