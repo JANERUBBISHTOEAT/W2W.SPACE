@@ -60,9 +60,7 @@
       width: min(calc(100% - 48px), 552px);
       min-height: 0;
       max-height: 100%;
-      overflow-x: hidden;
-      overflow-y: auto;
-      overscroll-behavior-y: contain;
+      overflow: clip;
       padding: 32px 0;
     }
     .brand { display: flex; justify-content: center; margin-bottom: 24px; }
@@ -81,7 +79,7 @@
       gap: 8px;
       margin: 0 0 16px;
       color: var(--muted);
-      font-size: 11px;
+      font-size: 12px;
       letter-spacing: .12em;
       text-transform: uppercase;
     }
@@ -133,6 +131,7 @@
       gap: 8px 16px;
       min-height: 44px;
       margin-top: 12px;
+      margin-bottom: 6px;
       margin-inline: 6px;
       color: var(--muted);
       font-size: 12px;
@@ -195,7 +194,54 @@
       .eyebrow { margin-bottom: 8px; font-size: 10px; }
       h1 { font-size: clamp(22px, 4vw, 28px); }
       .message { margin-top: 10px; margin-bottom: 14px; font-size: 13px; line-height: 1.5; }
-      .page-footer { margin-top: 0; font-size: 11px; }
+      .page-footer { margin-top: 0; font-size: 12px; }
+    }
+    @media (max-height: 650px) and (min-width: 600px) {
+      .page {
+        display: grid;
+        grid-template-columns: 136px minmax(0, 1fr);
+        column-gap: 20px;
+        width: min(calc(100% - 48px), 760px);
+        padding-top: 8px;
+        padding-bottom: 8px;
+      }
+      .brand { grid-column: 1; grid-row: 1; align-self: center; margin: 0; }
+      .brand img { width: 136px; height: auto; }
+      .maintenance-card { grid-column: 2; grid-row: 1; min-width: 0; }
+      .content { padding: 12px 20px; }
+      .eyebrow { display: none; }
+      h1 { font-size: 24px; }
+      .message { margin: 8px 0 10px; }
+      .page-footer { grid-column: 1 / -1; margin-top: 0; }
+    }
+    @media (max-height: 650px) and (width < 600px) {
+      .page { padding-top: 6px; padding-bottom: 6px; }
+      .brand { margin-bottom: 6px; }
+      .brand img { width: 117px; height: 36px; }
+      .content { padding: 12px 18px; }
+      .eyebrow { display: none; }
+      h1 { font-size: 24px; }
+      .message { margin: 8px 0 12px; }
+      .message span:first-child { display: none; }
+    }
+    @media (max-height: 360px) and (width < 600px) {
+      .page { padding-top: 4px; padding-bottom: 4px; }
+      .brand { margin-bottom: 4px; }
+      .brand img { width: 91px; height: 28px; }
+      .content { padding-top: 8px; padding-bottom: 8px; }
+      h1 { font-size: 22px; }
+      .message { margin: 6px 0 8px; font-size: 12px; }
+    }
+    @media (max-height: 300px) {
+      .brand, .message { display: none; }
+      .page { display: block; padding-top: 4px; padding-bottom: 4px; }
+      .content { padding: 8px 18px; }
+      .eyebrow { display: none; }
+      h1 { font-size: 22px; }
+    }
+    @media (max-height: 220px) {
+      .page { padding-top: 0; padding-bottom: 0; }
+      .content { padding-top: 4px; padding-bottom: 4px; }
     }
     @media (prefers-reduced-motion: reduce) {
       .tape::before { animation: none; }
