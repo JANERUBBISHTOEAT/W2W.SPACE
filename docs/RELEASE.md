@@ -68,6 +68,12 @@ require `DEPLOY_SERVER`.
   must use `W2W_IMAGE`. Keep its existing Compose project identity, network,
   volume and proxy routing. Supply `SESSION_SECRET` securely, at least 32
   characters; keep its value out of commands, logs and images.
+- The default `.env` in that Compose directory must be a protected, writable
+  regular file, without symbolic/hard links or group/other write permission.
+  Keep one simple unquoted `W2W_IMAGE` assignment (or omit it so release can add
+  it). Other values may use single-line dotenv quoting; multiline values and
+  alternate `COMPOSE_FILE`, `COMPOSE_ENV_FILES` or `COMPOSE_DISABLE_ENV_FILE`
+  assignments in the shell or `.env` are unsupported and stop before rollout.
 - Configure `TRUSTED_PROXY_CIDRS` with the verified immediate nginx proxy IPs
   or CIDRs. The application defaults to trusting no forwarding headers; aliases,
   wildcards and all-address ranges are rejected. Verify nginx overwrites
@@ -91,9 +97,11 @@ require `DEPLOY_SERVER`.
 Before approving mutations, establish the real absolute Compose directory,
 Compose project name, running app/Redis containers, image IDs/digests, host
 architecture, available disk/memory, HTTPS hostname and current behavior.
-If Compose was started with `-p` or extra override files, preserve those through
-the existing project configuration/environment; stop if the scripts cannot
-select exactly the existing services. Do not print full `docker inspect`,
+Preserve the existing project identity and automatically loaded Compose override
+file. The release script edits only the fixed default `.env`; installations
+requiring alternate Compose/environment-file selectors need a separately reviewed
+workflow. Stop if the scripts cannot select exactly the existing services.
+Do not print full `docker inspect`,
 `docker compose config`, `.env` or process environments: they can expose
 credentials. Query only specific non-secret fields.
 
@@ -167,19 +175,40 @@ must already be available securely to `redis-cli`; never put a password in
 command arguments. Backup/restore failure stops the rollout. Ensure there is
 enough disk/memory for the backup and temporary Redis before approving it.
 
-The replacement uses `compose up -d --no-deps --pull never --no-build remix`.
-The script verifies the running image ID and `/health` revision inside the new
-container. Failed replacement/internal health triggers app-only rollback and a
-failing exit status. The local wrapper then verifies public HTTPS health/version.
+After backup verification, the script atomically updates only `W2W_IMAGE` in the
+default `.env`, preserving its other bytes, line endings, owner, group, mode and
+extended attributes. A temporary file in the same directory is flushed and
+renamed over `.env`; no full environment backup is retained in release records
+or printed. The script checks Compose with `W2W_IMAGE` unset and allows only the
+`remix.image` field to change; proxy, trust, Redis and other settings must match.
+
+The replacement uses `compose up -d --no-deps --pull never --no-build remix`
+without a shell image override. The script verifies the running image ID,
+`/health` revision and the default image selection. Failed persistence,
+replacement or internal health triggers app-only rollback and a failing exit
+status. Recovery uses the actual pre-release container image, even if the old
+default `.env` selected a different stale image. If persistence or Docker is also
+unavailable during rollback, the script reports incomplete recovery and retains
+the record; it does not claim success. The local wrapper then verifies public HTTPS health/version.
 External verification failure is reported as a failed release; coordinate a
 rollback using the printed record if the public route cannot be corrected within
 the release window. Deployment is complete only after the public route, intended
 version and bounded user-flow smoke test pass.
 
 Keep the printed release record, published digest, previous image ID, validation
-results and release time. No image or backup pruning occurs. Future Compose
-operations must retain the selected `W2W_IMAGE` digest; the script records it in
-`current-image` instead of rewriting `.env`.
+results and release time. No image or backup pruning occurs. After a successful
+release, ordinary Compose configuration/recreation selects the verified digest
+from `.env`; `current-image` records the same reference. An explicit
+`W2W_IMAGE=... docker compose ...` remains available for a separately coordinated
+override and does not alter the persisted default.
+
+The record's `status` distinguishes pending release/rollback from verified
+completion. Updating a file and replacing a container cannot be one atomic
+operation: a killed process or host outage can interrupt between them. Before
+recovery, inspect that record, the actual running image and the default Compose
+image with the shell override unset; do not infer success from a pending record.
+Use the coordinated rollback below to restore the recorded previous runtime and
+its persisted default, then verify public health.
 
 ## Application rollback
 
@@ -190,13 +219,22 @@ rollout, and retain the same confirmed `DEPLOY_DIR`. After coordinating rollback
 W2W_RELEASE_APPROVED=1 ./deploy-auto.sh rollback
 ```
 
-Rollback selects the previous **image ID**, recreates only `remix`, and verifies
-that exact image and app health. For a legacy image without a valid revision
+Rollback persists the previous runtime's immutable registry reference when it
+still resolves to the recorded **image ID**, or uses that local image ID as the
+fallback (also supporting older release records). It recreates only `remix` and
+verifies that exact image, app health and the default Compose selection without
+a shell override. For a legacy image without a valid revision
 label, it verifies the exact image ID and rendered homepage, explicitly
 reporting that endpoint-based version verification is unavailable. Verify public
 HTTPS and expected user behavior manually before closing rollback. Keep
 Redis/proxy unchanged and preserve new user data; rollback never restores an
 older database automatically.
+
+If an explicit rollback fails after it starts changing the app/default image,
+the script attempts to restore the actual pre-rollback image and its default.
+It still exits unsuccessfully and records `rollback-failed-restored` only when
+that recovery verifies. If recovery also fails, retain the record and inspect
+both selections before another coordinated operation.
 
 ## Backup recovery boundary
 
