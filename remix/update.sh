@@ -19,8 +19,127 @@ docker compose version >/dev/null
 state_root=${W2W_RELEASE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/w2w-releases}
 [[ $state_root == /* ]] || fail 'Release state directory must be absolute.'
 mkdir -p "$state_root"
-exec 9> "$state_root/.lock"
-flock -n 9 || fail 'Another W2W release/rollback is in progress.'
+if [[ -n ${W2W_RELEASE_LOCK_FD:-} ]]; then
+  # The coordinator keeps this same open file description locked for the whole
+  # maintenance window. Prove it is already EX-locked; never trust a skip flag.
+  python3 - "$state_root/.lock" "$W2W_RELEASE_LOCK_FD" <<'PY'
+import fcntl, os, stat, sys
+try:
+    descriptor = int(sys.argv[2])
+    if descriptor < 3 or str(descriptor) != sys.argv[2]:
+        raise ValueError()
+    inherited = os.fstat(descriptor)
+    probe = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        actual = os.fstat(probe)
+        if (not stat.S_ISREG(inherited.st_mode) or inherited.st_nlink != 1 or
+                inherited.st_uid != os.geteuid() or stat.S_IMODE(inherited.st_mode) & 0o077 or
+                (inherited.st_dev, inherited.st_ino) != (actual.st_dev, actual.st_ino)):
+            raise ValueError()
+        try:
+            fcntl.flock(probe, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise ValueError("The inherited description was not exclusively locked")
+    finally:
+        os.close(probe)
+    # Only the same EX-locked description can succeed while that independent
+    # SH probe is blocked. Never LOCK_UN this descriptor in a child.
+    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except Exception:
+    print("Error: The inherited release lock is not the protected held exclusive lock.", file=sys.stderr)
+    sys.exit(1)
+PY
+  [[ $? == 0 ]] || fail 'Inherited release lock validation failed.'
+  exec 9>&"$W2W_RELEASE_LOCK_FD"
+else
+  exec 9> "$state_root/.lock"
+  flock -n 9 || fail 'Another W2W release/rollback is in progress.'
+fi
+
+result_file=${W2W_RELEASE_RESULT_FILE:-}
+operation_token=${W2W_RELEASE_OPERATION_TOKEN:-}
+result_record=
+if [[ -n $result_file || -n $operation_token ]]; then
+  python3 - "$state_root" "$result_file" "$operation_token" "$action" <<'PY'
+import os, pathlib, re, stat, sys
+try:
+    root, target, token, action = sys.argv[1:]
+    if not re.fullmatch(r"[0-9a-f]{32}", token):
+        raise ValueError()
+    root = pathlib.Path(root).resolve()
+    target = pathlib.Path(target)
+    parent = root / ("auto-release-" + token)
+    if (not target.is_absolute() or target.parent != parent or
+            target.name != "update-" + action + ".json" or parent.is_symlink()):
+        raise ValueError()
+    info = parent.stat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) & 0o077:
+        raise ValueError()
+    descriptor = os.open(str(parent / "operation-token"), os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor) as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077 or stream.read() != token + "\n"):
+            raise ValueError()
+    if target.exists() or target.is_symlink():
+        raise ValueError()
+except Exception:
+    print("Error: Updater results require this operation's private, token-owned transaction path.", file=sys.stderr)
+    sys.exit(1)
+PY
+  [[ $? == 0 ]] || fail 'Invalid operation result destination.'
+fi
+
+emit_result() {
+  [[ -n $result_file ]] || return 0
+  python3 - "$result_file" "$operation_token" "$action" "$deploy_dir" "$result_record" "$1" <<'PY'
+import json, os, pathlib, stat, sys, tempfile
+temporary = None
+try:
+    name, token, action, directory, record_name, code = sys.argv[1:]
+    target = pathlib.Path(name)
+    if target.exists() or target.is_symlink():
+        info = target.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or
+                stat.S_IMODE(info.st_mode) & 0o077 or json.loads(target.read_text()).get("operation_token") != token):
+            raise ValueError()
+    status = "not-created"
+    if record_name:
+        record = pathlib.Path(record_name)
+        if record.is_symlink() or record.parent != target.parent.parent or (record / "operation-token").read_text() != token + "\n":
+            raise ValueError()
+        status_file = record / "status"
+        status = status_file.read_text().strip() if status_file.is_file() else "preparing"
+    data = {"schema": "w2w-update-result-v1", "operation_token": token, "action": action,
+            "compose_directory": directory, "release_record": record_name or None,
+            "status": status, "exit_code": int(code) if int(code) >= 0 else None}
+    descriptor, temporary = tempfile.mkstemp(prefix=".w2w-result-", dir=str(target.parent))
+    with os.fdopen(descriptor, "w") as stream:
+        json.dump(data, stream)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, str(target))
+    temporary = None
+    descriptor = os.open(str(target.parent), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+except Exception:
+    print("Error: Could not persist the owned updater result; retain the transaction for inspection.", file=sys.stderr)
+    sys.exit(1)
+finally:
+    if temporary is not None:
+        os.unlink(temporary)
+PY
+}
+if [[ -n $result_file ]]; then
+  trap 'w2w_result_exit=$?; if ! emit_result "$w2w_result_exit"; then [[ $w2w_result_exit != 0 ]] || w2w_result_exit=1; fi; exit "$w2w_result_exit"' EXIT
+  emit_result -1 || fail 'Could not initialize the updater result.'
+fi
 
 # Only the default .env beside Compose is supported. Never follow a supplied
 # filename/symlink or retain a second copy of runtime secrets in release records.
@@ -236,6 +355,11 @@ rollback_record() {
 
 if [[ $action == rollback ]]; then
   [[ ${3:-} == /* ]] || fail 'Provide the exact absolute release record directory.'
+  if [[ -n $operation_token ]]; then
+    [[ -f $3/operation-token && $(cat "$3/operation-token") == "$operation_token" ]] || fail 'Rollback record does not belong to this operation.'
+    result_record=$3
+    emit_result -1 || fail 'Could not identify the owned rollback record.'
+  fi
   recovery_container=$(docker compose ps -q remix)
   [[ -n $recovery_container ]] || fail 'The running app is required before coordinated rollback.'
   recovery_image=$(docker inspect --format '{{.Image}}' "$recovery_container")
@@ -277,6 +401,11 @@ docker pull "$release_image"
 [[ $(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$release_image") == "$revision" ]] || fail 'Published image revision does not match the verified commit.'
 target_image=$(docker image inspect --format '{{.Id}}' "$release_image")
 record=$(mktemp -d "$state_root/release-${revision:0:12}-XXXXXXXX")
+if [[ -n $operation_token ]]; then
+  printf '%s\n' "$operation_token" > "$record/operation-token"
+  result_record=$record
+  emit_result -1 || fail 'Could not identify the newly created release record.'
+fi
 printf '%s\n' "$deploy_dir" > "$record/compose-directory"
 printf '%s\n' "$previous_image" > "$record/previous-image"
 printf '%s\n' "$previous_reference" > "$record/previous-reference"

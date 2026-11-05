@@ -10,7 +10,8 @@ The server Compose directory has been confirmed as
 `DEPLOY_DIR` so operators can check the selected installation. The public health
 URL must be confirmed before release.
 These scripts do not change SSH authentication, QQ-bot services, certificates,
-the reverse proxy, Redis versions, or the production data schema.
+proxy images or trust policy, Redis versions, or the production data schema.
+The release controller temporarily installs an owned nginx maintenance hook.
 
 ## GitHub Actions automation
 
@@ -18,11 +19,15 @@ the reverse proxy, Redis versions, or the production data schema.
 Deploy W2W → Run workflow** with `main` selected. It validates the exact commit,
 builds an image, checks it with disposable Redis, publishes its commit tag, and
 deploys the resulting immutable digest with the existing backup/rollback and
-internal/public health checks. Only one production run proceeds at a time; an
+internal/public health checks and automatic maintenance window. Only one production run proceeds at a time; an
 active release is not cancelled by a new push. Merging into `main` therefore
 authorizes an automatic production release.
 Pull requests targeting `main` run the application validation and shell syntax
 checks without deployment credentials; they never publish or change the server.
+Both jobs run the controller/transport unit suite on Python 3.8.18, matching the
+production Python minor version instead of relying only on the runner default.
+`W2W_TEST_PYTHON` selects that test interpreter without changing npm's build
+toolchain or the server runtime.
 
 Configure these repository **Actions variables** under **Settings → Secrets and
 variables → Actions → Variables**:
@@ -92,11 +97,12 @@ require `DEPLOY_SERVER`.
 - The normal release swaps only `remix`, so a brief application restart is
   expected. Proxy and Redis remain running. This is not a zero-downtime rollout.
 
-An optional independent [maintenance page](../deploy/maintenance/README.md) is
-available for separately coordinated windows. It is not enabled by Actions or
-the normal release command. Maintenance deliberately returns HTTP 503, including
-on `/health`; follow its explicit enable, internal release and verified restore
-sequence instead of bypassing the existing public health check.
+The independent [maintenance page](../deploy/maintenance/README.md) is enabled
+automatically by `release` after building and publishing have finished. It
+returns HTTP 503, including on `/health`, until the new app passes internal
+verification. Restoring normal routing must then pass public HTTPS health with
+the exact commit before the server marks the release complete. The HTML is the
+approved responsive version; the automation does not change it.
 
 ## Read-only discovery and prerequisites
 
@@ -165,9 +171,19 @@ digest reference, then run only after coordination:
 W2W_RELEASE_APPROVED=1 ./deploy-auto.sh release
 ```
 
-The script checks the clean, locally verified commit and streams the reviewed
-`remix/update.sh` to the host. It does not alter the server checkout. The server
-script verifies image selection/revision, records the previous app image ID and
+The script checks the clean, locally verified commit and packages a fixed list
+of six public Git blobs: the release controller, maintenance controller, HTML,
+two nginx snippets, and `remix/update.sh`. A bounded plain USTAR archive and its
+manifest have separately pinned SHA-256 checksums. The receiver rejects extra,
+duplicate, linked or ambiguous paths before staging source in an exclusive
+private directory. It never transfers `.env`, credentials or runtime data and
+does not alter the server checkout. The server requires Python 3.8 or newer.
+
+The server controller holds the shared release lock through maintenance enable,
+the update and any recovery, and public verification. It refuses an existing
+manual maintenance window or an unfinished foreign transaction. Its updater
+inherits the same verified lock descriptor; it cannot release the outer lock.
+The server script verifies image selection/revision, records the previous app image ID and
 available registry digests, and keeps a rollback tag. Release records default to
 `$HOME/.local/state/w2w-releases` with restrictive permissions.
 `W2W_RELEASE_STATE_DIR` can select another protected location when invoking
@@ -195,11 +211,32 @@ replacement or internal health triggers app-only rollback and a failing exit
 status. Recovery uses the actual pre-release container image, even if the old
 default `.env` selected a different stale image. If persistence or Docker is also
 unavailable during rollback, the script reports incomplete recovery and retains
-the record; it does not claim success. The local wrapper then verifies public HTTPS health/version.
-External verification failure is reported as a failed release; coordinate a
-rollback using the printed record if the public route cannot be corrected within
-the release window. Deployment is complete only after the public route, intended
-version and bounded user-flow smoke test pass.
+the record; it does not claim success.
+
+When internal verification succeeds, the controller removes its maintenance
+hook and anchor, regenerates/tests/reloads nginx, and checks public HTTPS health
+and the exact version while still holding the lock. This is the server's commit
+point. An error after public restoration that only concerns deleting an already
+unused owned asset is a cleanup warning, not a failed deployment.
+
+On an update failure, the controller first checks whether the updater recovered
+the exact previous runtime and default image. Otherwise it requests rollback
+using only this transaction's recorded release directory. Maintenance closes
+only after that recovered revision passes internal and public checks; the
+release still exits unsuccessfully and reports recovery. Failed recovery keeps
+the maintenance response and a failing result. A new-version public failure
+first reinstates and verifies maintenance before attempting rollback. Existing
+Redis data is never rolled back. Deployment acceptance also requires the normal
+bounded user-flow smoke test.
+
+SSH disconnection, timeout or a killed process can leave the outcome unknown.
+The client never automatically resends a release. Inspect the exact transaction,
+maintenance record, running image and persisted default before recovery. An
+unfinished transaction blocks automatic takeover even when a process lock is
+available: Docker may still be completing an already submitted operation.
+SIGKILL, a host outage and disk failure cannot be made atomic by a shell trap.
+Do not delete the state, lock, hook or anchor to bypass this protection. Retain
+the staged source bundle with its recovery records until the incident is closed.
 
 Keep the printed release record, published digest, previous image ID, validation
 results and release time. No image or backup pruning occurs. After a successful
