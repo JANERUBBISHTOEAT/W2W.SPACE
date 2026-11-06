@@ -2,28 +2,26 @@ import {
   type ActionFunctionArgs,
   redirect,
   Form,
+  useNavigate,
 } from "react-router";
-import { requireSessionIdentity } from "~/utils/session.server";
+import { createLocalFile } from "~/utils/files.local";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const type = formData.get("type") as string;
 
-  const { sub } = await requireSessionIdentity(request);
 
   if (type === "text") {
     const { createEmptyText } = await import("~/utils/text.server");
-    const text = await createEmptyText(sub);
+    const text = await createEmptyText();
     return redirect(`/texts/${text.id}`);
   }
 
-  // Default to file
-  const { createEmptyFile } = await import("~/utils/data.server");
-  const file = await createEmptyFile(sub);
-  return redirect(`/files/${file.id}/edit`);
+  return redirect("/new");
 };
 
 export default function New() {
+  const navigate = useNavigate();
 
   return (
     <div
@@ -34,7 +32,11 @@ export default function New() {
         padding: "2rem",
       }}
     >
-      <Form method="post" style={{ flex: 1, display: "contents" }}>
+      <Form method="post" style={{ flex: 1, display: "contents" }} onSubmit={(event) => {
+        event.preventDefault();
+        const file = createLocalFile();
+        navigate(`/files/${file.id}/edit`);
+      }}>
         <input type="hidden" name="type" value="file" />
         <button
           type="submit"

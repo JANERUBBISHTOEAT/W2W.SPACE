@@ -19,7 +19,7 @@
 - 🚀 **Fast P2P Transfer**: Direct peer-to-peer file sharing using WebTorrent protocol
 - 🔒 **Privacy-First**: No login required, no files stored on servers
 - 💾 **Large File Support**: No file size limitations
-- 🔑 **Token-Based Access**: Simple 6-digit token for secure file access
+- 🔑 **Token-Based Access**: Simple 6-digit code for finding a shared file or text
 - 🎨 **Modern UI**: Clean and intuitive user interface built with Remix
 - ⚡ **Real-Time Progress**: Live transfer progress with peer information
 - 🌍 **Browser-Based**: Works in all modern browsers (Chrome, Firefox, Safari, Edge)
@@ -55,7 +55,7 @@ Perfect for transferring files to public computers:
 <details markdown="1">
 <summary>📊 Dashboard</summary>
 
-Users can view all their files in a clean, organized dashboard with quick actions.
+The dashboard shows this browser’s personal file records. Names, notes and favorites stay in this browser; removing a record does not remove a shared resource.
 
 ![Dashboard](img/dashboard.png)
 
@@ -75,7 +75,7 @@ File or text can be shared with a single click, providing seamless peer-to-peer 
 
 #### New File
 
-Create new files for sharing with built-in editor.
+Create a local file draft, then select a file to seed. Its sharing token appears only after the magnet is ready.
 
 ![New File](img/file-new.png)
 
@@ -117,7 +117,7 @@ Full-featured VS Code's editor ([Monaco Editor](https://github.com/microsoft/mon
 
 #### Save Text
 
-Save text with real-time confirmation.
+Anyone holding the text link can save its shared content; the document keeps the same ID.
 
 ![Save Text](img/text-save.png)
 
@@ -130,6 +130,8 @@ Retrieve text by entering the token code.
 </details>
 
 ---
+
+See the [anonymous Share model](docs/SHARES.md) for identity, expiry, private file records and the intentional reset of legacy share links. Screenshots below document the existing visual design; labels reflecting ownership and personal text metadata have changed.
 
 ## 🚀 Quick Start
 
@@ -191,8 +193,9 @@ CSCC09-24F-Project/
 - **WebRTC Required**: Works in modern browsers (Chrome, Firefox, Safari, Edge, Opera)
 - **Both Devices Online**: Requires both sender and receiver to be online simultaneously
 - **Network Restrictions**: May not work on heavily firewalled networks (corporate, university networks)
-- **Public Protocol**: Files are shared via public magnet links - use tokens for security
-- **No Offline Storage**: Files are not stored permanently on the server
+- **Public Protocol**: Files are shared via public magnet links; short tokens are convenience codes, not authentication
+- **No Offline File Storage**: File bytes remain on peers; metadata and text shares expire after 30 idle days
+- **Browser-Local History**: Personal file names, notes and favorites are stored only in this browser; optional Google login does not sync them
 
 ---
 

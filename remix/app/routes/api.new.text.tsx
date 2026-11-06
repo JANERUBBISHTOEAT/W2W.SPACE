@@ -1,13 +1,7 @@
-import {
-  type ActionFunctionArgs,
-  redirect,
-} from "react-router";
+import { redirect } from "react-router";
 import { createEmptyText } from "~/utils/text.server";
-import { requireSessionIdentity } from "~/utils/session.server";
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { sub } = await requireSessionIdentity(request);
-  const newText = await createEmptyText(sub, true);
-
-  return redirect(`/texts/${newText.id}`);
+export const action = async () => {
+  const text = await createEmptyText();
+  return redirect(`/texts/${text.id}`);
 };

@@ -1,108 +1,68 @@
 import {
-  type ActionFunctionArgs,
   type LoaderFunctionArgs,
   data,
-  redirect,
   Form,
-  useActionData,
-  useFetcher,
   useLoaderData,
   useLocation,
   useNavigate,
 } from "react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap, FIELD_MAX_SIZE } from "~/utils/constants";
-import { deleteFile, getFile, updateFile } from "~/utils/data.server";
-import { requireSessionIdentity } from "~/utils/session.server";
+import { getLocalFile, putLocalFile, rememberShare, removeLocalFile, useLocalFile } from "~/utils/files.local";
+import type { LocalFile, PublicShare } from "~/utils/files.local";
 import { loadTorrentClient } from "~/utils/webtorrent.client";
 import type { BrowserTorrent } from "~/utils/webtorrent.client";
 
 export const loader = async ({ params, request }: LoaderFunctionArgs) => {
-  invariant(params.fileId, "Missing fileId param");
-  const { sub } = await requireSessionIdentity(request);
-  const file = await getFile(sub, params.fileId);
-  if (!file) return redirect("/?message=Page+Not+Found");
-  if (file.token) {
-    const HashMap = (await import("~/utils/hashmap.server")).default;
-    if ((await HashMap.getBoth(file.token)).status === "deleted") return redirect("/deleted");
-  }
-  const updated = await updateFile(sub, params.fileId, {
-    lastAccessedAt: new Date().toISOString(),
-    accessCount: (file.accessCount || 0) + 1,
-  });
   const search = new URL(request.url).searchParams;
   return data({
-    file: updated,
+    fileId: params.fileId || "",
     pasted: search.get("pasted") === "true",
     fileName: search.get("fileName") || "Pasted file",
     mimeType: search.get("mimeType") || "",
   });
 };
 
-export const action = async ({ params, request }: ActionFunctionArgs) => {
-  invariant(params.fileId, "Missing fileId param");
-  const { sub } = await requireSessionIdentity(request);
-  const file = await getFile(sub, params.fileId);
-  if (!file) throw new Response("Not Found", { status: 404 });
-  const formData = await request.formData();
-  if (formData.get("intent") === "cancelSubmission") {
-    if (!file.magnet) {
-      await deleteFile(sub, params.fileId);
-      return redirect("/?message=Aborted");
-    }
-    return data({ cancelRedirect: null });
-  }
-
-  const getString = (name: string, fallback = "") => {
-    const value = formData.get(name);
-    return typeof value === "string" ? value : fallback;
-  };
-  const filename = getString("fileName", file.filename);
-  const magnet = getString("magnet", file.magnet);
-  const notes = getString("notes", file.notes);
-  const type = getString("fileType", file.type);
-  const rawSize = getString("fileSize");
-  const size = rawSize ? Number(rawSize) : (file.size ?? 0);
-  if (!filename || !magnet.startsWith("magnet:?") || !Number.isSafeInteger(size) || size < 0) {
-    return data({ error: "A filename, magnet link and valid file size are required" }, { status: 400 });
-  }
-  if ([filename, magnet, notes, type].some((value) => new TextEncoder().encode(value).length > FIELD_MAX_SIZE)) {
-    return data({ error: `File details must each be at most ${FIELD_MAX_SIZE} bytes` }, { status: 400 });
-  }
-  const updated = await updateFile(sub, params.fileId, {
-    filename,
-    magnet,
-    notes,
-    type,
-    size,
-    // Share tokens are server-assigned; a form must not replace another mapping.
-    token: file.token,
-    lastEditedAt: new Date().toISOString(),
-  }, false, true);
-  if (updated.id !== params.fileId) {
-    return redirect(`/files/${updated.id}/edit?message=Existing+file+found`);
-  }
-  return redirect(`/files/${updated.id}/?message=File+saved`);
-};
-
 export default function EditFile() {
-  const { file: savedFile, pasted, fileName, mimeType } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
+  const params = useLoaderData<typeof loader>();
+  const { file, loading, error } = useLocalFile(params.fileId);
+  if (!file) return <p>{loading ? "Loading…" : error || "This file is not in this browser."}</p>;
+  return <Editor key={file.id} savedFile={file} pasted={params.pasted} fileName={params.fileName} mimeType={params.mimeType} />;
+}
+
+function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFile; pasted: boolean; fileName: string; mimeType: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState(savedFile.displayName);
+  const [notes, setNotes] = useState(savedFile.notes);
   const [token, setToken] = useState<string>();
   const [torrent, setTorrent] = useState<BrowserTorrent>();
-  const { submit, data, state } = useFetcher<{ cancelRedirect?: string | null; error?: string }>();
+  const [error, setError] = useState<string>();
   const seedingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const nameRef = useRef(name);
+  const notesRef = useRef(notes);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const shownMessageKeyRef = useRef<string>();
 
   const handleSubmit = useCallback((files: FileList | null) => {
     const selectedFile = files?.[0];
     if (!selectedFile || seedingRef.current) return;
+    const current = getLocalFile(savedFile.id);
+    if (!current) return;
+    const draftName = nameRef.current || selectedFile.name;
+    const draftNotes = notesRef.current;
+    try {
+      putLocalFile({ ...current, displayName: draftName, notes: draftNotes });
+    } catch { return; }
     setFile(selectedFile);
+    setName(draftName);
+    nameRef.current = draftName;
     seedingRef.current = true;
     const seedPromise = loadTorrentClient().then((client) => new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("Seeding timeout")), 120000);
@@ -111,25 +71,31 @@ export default function EditFile() {
         reject(error);
       };
       const seeded = client.seed(selectedFile, (readyTorrent) => {
-        setTorrent(readyTorrent);
+        if (mountedRef.current) setTorrent(readyTorrent);
         const formData = new FormData();
         formData.set("intent", "acquireToken");
         formData.set("magnet", readyTorrent.magnetURI);
+        formData.set("filename", selectedFile.name);
+        formData.set("filetype", selectedFile.type);
+        formData.set("filesize", String(selectedFile.size));
         void fetch(`/api/${savedFile.id}/token`, { method: "POST", body: formData, signal: AbortSignal.timeout(30000) })
           .then(async (response) => {
-            const result: { token?: string; error?: string } = await response.json();
-            if (!response.ok || typeof result.token !== "string" || !result.token) {
+            const result: { token?: string; share?: PublicShare; error?: string } = await response.json();
+            if (!response.ok || typeof result.token !== "string" || !result.token || !result.share) {
               throw new Error(result.error || "Could not obtain a share token");
             }
             clearTimeout(timeout);
-            setToken(result.token);
-            submit({
-              intent: "saveFile",
-              fileName: selectedFile.name,
-              magnet: readyTorrent.magnetURI,
-              fileType: selectedFile.type,
-              fileSize: String(selectedFile.size),
-            }, { method: "POST", action: "." });
+            if (mountedRef.current) setToken(result.token);
+            // Publication may finish after navigation. Keep the local record,
+            // but do not resurrect a draft the user explicitly removed.
+            const current = getLocalFile(savedFile.id);
+            if (current) {
+              if (mountedRef.current && current.displayName === draftName && current.notes === draftNotes) {
+                putLocalFile({ ...current, displayName: nameRef.current, notes: notesRef.current });
+              }
+              const localFile = rememberShare(result.share, "seed", savedFile.id);
+              if (mountedRef.current) navigate(`/files/${localFile.shareId || localFile.id}/?message=File+saved`);
+            }
             resolve(result.token);
           }).catch(fail);
       });
@@ -147,9 +113,9 @@ export default function EditFile() {
           ),
         },
       }),
-      error: (error: unknown) => error instanceof Error && error.message === "Seeding timeout" ? "Seeding timed out" : "Seeding failed",
+      error: (error: unknown) => error instanceof Error ? error.message : "Seeding failed",
     });
-  }, [savedFile.id, submit]);
+  }, [savedFile.id, navigate]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
@@ -173,12 +139,6 @@ export default function EditFile() {
       .finally(() => URL.revokeObjectURL(url));
   }, [pasted, fileName, mimeType, handleSubmit]);
 
-  useEffect(() => {
-    if (state !== "idle" || !data) return;
-    if (data.error) toast.error(data.error);
-    if (data.cancelRedirect === null) navigate(-1);
-    else if (data.cancelRedirect) navigate(data.cancelRedirect);
-  }, [state, data, navigate]);
 
   useEffect(() => {
     const message = new URLSearchParams(location.search).get("message");
@@ -189,14 +149,14 @@ export default function EditFile() {
       toast.info(message, {
         action: {
           label: "Go to file",
-          onClick: () => navigate(`/files/${savedFile.id}`),
+          onClick: () => navigate(`/files/${savedFile.shareId || savedFile.id}`),
         },
       });
     } else {
       toast.info(message);
     }
     window.history.replaceState({}, "", location.pathname);
-  }, [location, navigate, savedFile.id]);
+  }, [location, navigate, savedFile.id, savedFile.shareId]);
 
   const copy = async (value: string) => {
     try {
@@ -206,12 +166,20 @@ export default function EditFile() {
       toast.error("Could not copy. Please allow clipboard access and try again.");
     }
   };
-  const magnet = torrent?.magnetURI || savedFile.magnet || "";
-  const shareToken = token || savedFile.token || "";
+  const magnet = torrent?.magnetURI || savedFile.share?.magnet || "";
+  const shareToken = token || savedFile.share?.token || "";
 
   return (
-    <Form key={savedFile.id} id="contact-form" method="post">
-      {actionData && "error" in actionData ? <output role="alert">{actionData.error}</output> : null}
+    <Form key={savedFile.id} id="contact-form" method="post" onSubmit={(event) => {
+      event.preventDefault();
+      if ([name, notes].some((value) => new TextEncoder().encode(value).length > FIELD_MAX_SIZE)) {
+        setError(`File details must each be at most ${FIELD_MAX_SIZE} bytes`);
+        return;
+      }
+      putLocalFile({ ...(getLocalFile(savedFile.id) || savedFile), displayName: name, notes });
+      navigate(`/files/${savedFile.shareId || savedFile.id}/?message=File+saved`);
+    }}>
+      {error ? <output role="alert">{error}</output> : null}
       <div
         id="dropzone"
         role="button"
@@ -235,7 +203,7 @@ export default function EditFile() {
       </div>
       <p>
         <span>Name</span>
-        <input aria-label="Filename" name="fileName" value={file?.name || savedFile.filename || ""} placeholder="Filename" type="text" readOnly />
+        <input aria-label="Filename" name="fileName" value={name} onChange={(event) => { nameRef.current = event.target.value; setName(event.target.value); }} placeholder="Filename" type="text" />
         <input aria-label="Token" name="token" value={shareToken} placeholder="Token" type="text" disabled readOnly />
         <button id="copy-token" type="button" aria-label="Copy token" onClick={() => copy(shareToken)}>Copy</button>
       </p>
@@ -247,13 +215,18 @@ export default function EditFile() {
       </div>
       <label>
         <span>Notes</span>
-        <textarea defaultValue={savedFile.notes || ""} name="notes" rows={6} />
+        <textarea value={notes} onChange={(event) => { notesRef.current = event.target.value; setNotes(event.target.value); }} name="notes" rows={6} />
       </label>
-      <input type="hidden" name="fileType" value={file?.type ?? savedFile.type ?? ""} />
-      <input type="hidden" name="fileSize" value={file?.size ?? savedFile.size ?? 0} />
+      <input type="hidden" name="fileType" value={file?.type ?? savedFile.share?.type ?? ""} />
+      <input type="hidden" name="fileSize" value={file?.size ?? savedFile.share?.size ?? 0} />
       <p>
         <button type="submit">Save</button>
-        <button type="button" onClick={() => submit({ intent: "cancelSubmission" }, { method: "POST", action: "." })}>Cancel</button>
+        <button type="button" onClick={() => {
+          if (!savedFile.shareId) {
+            removeLocalFile(savedFile.id);
+            navigate("/?message=Aborted");
+          } else navigate(`/files/${savedFile.shareId || savedFile.id}`);
+        }}>Cancel</button>
       </p>
     </Form>
   );

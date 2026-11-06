@@ -207,7 +207,7 @@ test("Google login uses signed, session-bound one-time challenges", { timeout: 9
     await relogin.text();
   });
 
-  await t.test("verified login migrates visitor history without breaking a recipient's shared link", async () => {
+  await t.test("verified login leaves anonymous shares and their token unchanged", async () => {
     const sender = visitor("migration-sender");
     const recipient = visitor("migration-recipient");
     const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=nonce-login.txt";
@@ -217,22 +217,34 @@ test("Google login uses signed, session-bound one-time challenges", { timeout: 9
     response = await recipient.request("/api/new/token", { intent: "acquireMagnet", token: source.token });
     assert.equal(response.status, 200);
     const copy = await response.json();
+    assert.equal(copy.shareId, source.shareId);
+    assert.equal(copy.magnet, source.magnet);
+    assert.match(source.shareId, /^[0-9a-f]{40}$/);
     response = await recipient.request("/api/new/text", {});
     assert.equal(response.status, 302);
     const textId = response.headers.get("location").split("/").pop();
     const { nonce } = await issue(recipient.request, app.baseURL);
+    const before = await dataSnapshot(redis);
     response = await login(recipient.request, nonce, credential(nonce, { sub: "migration-google-user" }));
     assert.equal(response.status, 200);
     assert.match(response.headers.get("set-cookie") || "", /Secure/i);
     assert.equal((await routeData(response)).user.sub, "migration-google-user");
-    assert.equal(await redis.hlen("user:migration-recipient:files"), 0);
-    assert.equal(await redis.hlen("user:migration-recipient:texts"), 0);
-    assert(await redis.hget("user:migration-google-user:files", copy.fileId));
-    assert(await redis.hget("user:migration-google-user:texts", textId));
-    assert.equal((await sender.request(`/files/${source.fileId}/destroy`, {})).status, 302);
+    assert.deepEqual(await dataSnapshot(redis), before,
+      "signing in must not migrate, rewrite, or renew anonymous shares");
+    assert.deepEqual(await redis.keys("user:*"), [],
+      "personal file records live in the browser, not an account collection");
+    assert.equal(await redis.exists(`w2w:v2:share:file:${source.shareId}`), 1);
+    assert.equal(await redis.exists(`w2w:v2:share:text:${textId}`), 1);
     response = await recipient.request(`/token/${source.token}`);
     assert.equal(response.status, 302);
     assert.equal(response.headers.get("location"), `/?token=${source.token}`);
+    response = await recipient.request("/api/new/token", { intent: "acquireMagnet", token: source.token });
+    assert.equal(response.status, 200);
+    const resolved = await response.json();
+    assert.equal(resolved.shareId, source.shareId);
+    assert.equal(resolved.magnet, source.magnet);
+    assert.equal((await sender.request(`/texts/${textId}`)).status, 200,
+      "the text remains readable by another browser after login");
     response = await recipient.request(indexDataPath);
     assert.equal((await routeData(response, "routes/_index")).user.sub, "migration-google-user");
   });

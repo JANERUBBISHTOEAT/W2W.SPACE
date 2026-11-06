@@ -19,15 +19,11 @@ import {
 } from "react-router";
 import { Toaster } from "sonner";
 import "sonner/dist/styles.css";
+import { useEffect } from "react";
 import { randomUUID } from "node:crypto";
-import { createEmptyFile, getFiles } from "~/utils/data.server";
-import {
-  commitSession,
-  getSession,
-  getUserSession,
-  getVisitorSession,
-  requireSessionIdentity,
-} from "./utils/session.server";
+import { commitSession, getSession, getUserSession, getVisitorSession } from "~/utils/session.server";
+import { getLocalFile, putLocalFile, useLocalFiles } from "~/utils/files.local";
+import type { PublicShare } from "~/utils/files.local";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
@@ -36,105 +32,46 @@ export const links: LinksFunction = () => [
 ];
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const url = new URL(request.url);
-  const q = url.searchParams.get("q");
-  const user = await getUserSession(request);
-
-  // Check and cleanup expired records
-  const { cleanupExpiredRecords } = await import(
-    "~/utils/cleanup.server"
-  );
-  await cleanupExpiredRecords();
-
-  if (!user) {
-    // visitor, check if has session
+  const q = new URL(request.url).searchParams.get("q");
+  // Authentication remains optional and independent of shares and local files.
+  if (!await getUserSession(request) && !await getVisitorSession(request)) {
     const session = await getSession(request);
-    console.log("Session:", session.data);
-    const visitor = await getVisitorSession(request);
-    console.log("Visitor:", visitor);
-    if (visitor) {
-      // has session, get files and texts
-      console.log("Existing visitor:", visitor.sub);
-      const { getTexts } = await import("~/utils/text.server");
-      const [files, texts] = await Promise.all([
-        getFiles(visitor.sub, q),
-        getTexts(visitor.sub, q),
-      ]);
-
-      // Merge and sort by lastEditedAt; tag each with itemType so sidebar can tell file vs text (new empty file has no filename)
-      const allItems = [
-        ...files.map((f) => ({ ...f, itemType: "file" as const })),
-        ...texts.map((t) => ({ ...t, itemType: "text" as const })),
-      ].sort((a, b) => {
-        const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
-        const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
-        return new Date(dateB).getTime() - new Date(dateA).getTime();
-      });
-
-      return data({
-        files,
-        texts,
-        allItems,
-        q,
-        loggedIn: false,
-      });
-    } else {
-      // no session, create with a random id session
-      const session = await getSession(request);
-      const rid = randomUUID();
-      console.log("New visitor session:", rid);
-      session.set("visitor", { sub: rid });
-      return data(
-        { files: [], texts: [], allItems: [], q, loggedIn: false },
-        { headers: { "Set-Cookie": await commitSession(session) } },
-      );
-    }
+    session.set("visitor", { sub: randomUUID() });
+    return data({ q }, { headers: { "Set-Cookie": await commitSession(session) } });
   }
-  console.log("Logged in user:", user.sub);
-  const { getTexts } = await import("~/utils/text.server");
-  const [files, texts] = await Promise.all([
-    getFiles(user.sub, q),
-    getTexts(user.sub, q),
-  ]);
-
-  // Merge and sort by lastEditedAt; tag each with itemType so sidebar can tell file vs text (new empty file has no filename)
-  const allItems = [
-    ...files.map((f) => ({ ...f, itemType: "file" as const })),
-    ...texts.map((t) => ({ ...t, itemType: "text" as const })),
-  ].sort((a, b) => {
-    const dateA = a.lastEditedAt || a.lastAccessedAt || a.createdAt;
-    const dateB = b.lastEditedAt || b.lastAccessedAt || b.createdAt;
-    return new Date(dateB).getTime() - new Date(dateA).getTime();
-  });
-
-  return data({
-    files,
-    texts,
-    allItems,
-    q,
-    loggedIn: true,
-  });
+  return data({ q });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const formData = await request.formData();
-  const type = formData.get("type") as string;
-
-  const { sub } = await requireSessionIdentity(request);
-
-  if (type === "text") {
+  const form = await request.formData();
+  if (form.get("type") === "text") {
     const { createEmptyText } = await import("~/utils/text.server");
-    const text = await createEmptyText(sub);
+    const text = await createEmptyText();
     return redirect(`/texts/${text.id}`);
   }
-
-  // Default to file
-  const file = await createEmptyFile(sub);
-  return redirect(`/files/${file.id}/edit`);
+  return redirect("/new");
 };
 
 export default function App() {
-  const { allItems: allItems, q } = useLoaderData<typeof loader>();
+  const { q } = useLoaderData<typeof loader>();
+  const files = useLocalFiles();
+  const shareIds = [...new Set(files.flatMap((file) => file.shareId ? [file.shareId] : []))].sort().join(",");
+  useEffect(() => {
+    let cancelled = false;
+    for (const shareId of shareIds.split(",").filter(Boolean)) {
+      void fetch(`/api/files?shareId=${encodeURIComponent(shareId)}`)
+        .then(async (response) => {
+          const result: { share?: PublicShare | null } = await response.json();
+          if (cancelled) return;
+          const file = getLocalFile(shareId);
+          if (!file) return;
+          if (response.ok && result.share) putLocalFile({ ...file, share: result.share, status: undefined });
+          else if (response.status === 404 || response.status === 410) putLocalFile({ ...file, status: "expired" });
+        }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [shareIds]);
+  const allItems = files.filter((file) => !q || `${file.displayName} ${file.notes} ${file.share?.token || ""}`.toLowerCase().includes(q.toLowerCase()));
   const navigation = useNavigation();
   const submit = useSubmit();
   const searching =
@@ -190,130 +127,27 @@ export default function App() {
           <nav>
             {allItems && allItems.length > 0 ? (
               <ul>
-                {allItems.map((item) => {
-                  // Use itemType (set in loader); don't use filename - new empty file has no filename and was wrongly shown as text
-                  const isFile = item.itemType === "file";
-                  const file = isFile ? item : null;
-                  const text = !isFile ? item : null;
-
-                  if (file) {
-                    // Use lastEditedAt if available, otherwise use lastAccessedAt
-                    const lastDate = file.lastEditedAt || file.lastAccessedAt;
-                    const daysSinceEdit = lastDate
-                      ? Math.floor(
-                          (Date.now() - new Date(lastDate).getTime()) /
-                            (1000 * 60 * 60 * 24),
-                        )
-                      : 0;
-                    const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                    const isExpired = file.status === "deleted";
-
-                    return (
-                      <li key={file.id}>
-                        {" "}
-                        <NavLink
-                          className={({ isActive, isPending }) =>
-                            isActive ? "active" : isPending ? "pending" : ""
-                          }
-                          to={isExpired ? `/deleted` : `files/${file.id}`}
-                          style={{
-                            textDecoration: isExpired ? "line-through" : "none",
-                          }}
-                        >
-                          {file.filename || file.token ? (
-                            <>
-                              {file.filename} #
-                              {file.token ? file.token : "------"}
-                            </>
-                          ) : (
-                            <i>No Name</i>
-                          )}{" "}
-                          {file.favorite ? <span>★</span> : null}
-                          {isExpiring && (
-                            <i
-                              className="fas fa-clock"
-                              style={{ color: "#ff6b6b", opacity: 0.6 }}
-                              title={`⚠️ Expiring soon (${
-                                30 - daysSinceEdit
-                              } days left)`}
-                            ></i>
-                          )}
-                          {isExpired && (
-                            <i
-                              className="fas fa-trash"
-                              style={{ color: "#ccc", opacity: 0.6 }}
-                              title="🗑️ Deleted (30+ days without access)"
-                            ></i>
-                          )}
-                          <i
-                            className={
-                              "fas " +
-                              (file.owner ? "fa-upload" : "fa-download")
-                            }
-                            title={
-                              file.owner
-                                ? "💡You created this file"
-                                : "💡You downloaded this file"
-                            }
-                          ></i>
-                        </NavLink>
-                      </li>
-                    );
-                  } else if (text) {
-                    // Handle text
-                    const lastDate = text.lastEditedAt || text.lastAccessedAt;
-                    const daysSinceEdit = lastDate
-                      ? Math.floor(
-                          (Date.now() - new Date(lastDate).getTime()) /
-                            (1000 * 60 * 60 * 24),
-                        )
-                      : 0;
-                    const isExpiring = daysSinceEdit > 25 && daysSinceEdit < 30;
-                    const isExpired = text.status === "deleted";
-
-                    return (
-                      <li key={text.id}>
-                        {" "}
-                        <NavLink
-                          className={({ isActive, isPending }) =>
-                            isActive ? "active" : isPending ? "pending" : ""
-                          }
-                          to={isExpired ? `/deleted` : `texts/${text.id}`}
-                          style={{
-                            textDecoration: isExpired ? "line-through" : "none",
-                          }}
-                        >
-                          {text.title || text.token ? (
-                            <>
-                              {text.title} #{text.token ? text.token : "------"}
-                            </>
-                          ) : (
-                            <i>No Name</i>
-                          )}{" "}
-                          {isExpiring && (
-                            <i
-                              className="fas fa-clock"
-                              style={{ color: "#ff6b6b", opacity: 0.6 }}
-                              title={`⚠️ Expiring soon (${
-                                30 - daysSinceEdit
-                              } days left)`}
-                            ></i>
-                          )}
-                          {isExpired && (
-                            <i
-                              className="fas fa-trash"
-                              style={{ color: "#ccc", opacity: 0.6 }}
-                              title="🗑️ Deleted (30+ days without access)"
-                            ></i>
-                          )}
-                          <i
-                            className="fas fa-file-code"
-                            title="💡Text document"
-                          ></i>
-                        </NavLink>
-                      </li>
-                    );
-                  }
+                {allItems.map((file) => {
+                  const lastDate = file.share?.lastAccessedAt;
+                  const daysSinceAccess = lastDate ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) : 0;
+                  const isExpiring = daysSinceAccess > 25 && daysSinceAccess < 30;
+                  const isExpired = file.status === "expired";
+                  return (
+                    <li key={file.id}>
+                      {" "}
+                      <NavLink
+                        className={({ isActive, isPending }) => isActive ? "active" : isPending ? "pending" : ""}
+                        to={`files/${file.shareId || file.id}${file.shareId ? "" : "/edit"}`}
+                        style={{ textDecoration: isExpired ? "line-through" : "none" }}
+                      >
+                        {file.displayName || file.share?.token ? <>{file.displayName} #{file.share?.token || "------"}</> : <i>No Name</i>}{" "}
+                        {file.favorite ? <span>★</span> : null}
+                        {isExpiring && <i className="fas fa-clock" style={{ color: "#ff6b6b", opacity: 0.6 }} title={`⚠️ Expiring soon (${30 - daysSinceAccess} days left)`} />}
+                        {isExpired && <i className="fas fa-trash" style={{ color: "#ccc", opacity: 0.6 }} title="Share expired (30+ days without access)" />}
+                        <i className={`fas ${file.direction === "seed" ? "fa-upload" : "fa-download"}`} title={file.direction === "seed" ? "You seeded this file" : "You received this file"} />
+                      </NavLink>
+                    </li>
+                  );
                 })}
               </ul>
             ) : (

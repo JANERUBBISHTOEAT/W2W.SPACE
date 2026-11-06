@@ -7,251 +7,57 @@ import {
   useActionData,
   useLoaderData,
   useNavigation,
+  useNavigate,
   useSubmit,
 } from "react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { toast } from "sonner";
-import invariant from "tiny-invariant";
-import type { TextRecord } from "~/utils/text.server";
-import {
-  getText,
-  getTextByTextId,
-  updateText,
-  updateTextByTextId,
-  deleteText,
-  saveTextUndo,
-} from "~/utils/text.server";
-import { getUserSession, getVisitorSession } from "~/utils/session.server";
-import { TEXT_MAX_SIZE, FIELD_MAX_SIZE } from "~/utils/constants";
+import { getTextByTextId, updateTextByTextId, accessText } from "~/utils/text.server";
+import { ShareValidationError } from "~/utils/share.server";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
   { rel: "stylesheet", href: "/css/text-editor.css" },
 ];
 
-export const loader = async ({ params, request }: LoaderFunctionArgs) => {
-  invariant(params.textId, "Missing textId param");
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  const userId = user?.sub || visitor?.sub;
-
-  // Get text from user's collection first to determine ownership
-  let userText = null;
-  let isOwner = false;
-
-  if (userId) {
-    userText = await getText(userId, params.textId);
-    isOwner = !!userText;
-  }
-
-  // Get the text content (from user collection or search globally)
-  let text = userText;
-  if (!text) {
-    text = await getTextByTextId(params.textId);
-  }
-
-  if (!text) {
-    return redirect("/?message=Text+Not+Found");
-  }
-
-  // Check if text is marked as deleted in unifiedTokenMap
-  if (text.token) {
-    const HashMap = (await import("~/utils/hashmap.server")).default;
-    const tokenStatus = await HashMap.getBoth(text.token);
-    if (tokenStatus && tokenStatus.status === "deleted") {
-      return redirect(`/deleted`);
-    }
-  }
-
-  // Update access statistics (DO NOT update lastEditedAt on access)
-  const now = new Date().toISOString();
-  const updatedText = {
-    ...text,
-    lastAccessedAt: now,
-    accessCount: (text.accessCount || 0) + 1,
-    // Explicitly do NOT update lastEditedAt here
-  };
-
-  // Update access statistics using the appropriate method
-  try {
-    if (userId) {
-      try {
-        await updateText(userId, params.textId, updatedText);
-      } catch {
-        // If user is not owner, use global update
-        await updateTextByTextId(params.textId, updatedText);
-      }
-    } else {
-      // Update globally by textId when user is logged out
-      await updateTextByTextId(params.textId, updatedText);
-    }
-  } catch (error) {
-    // If update fails, just continue with the text data
-    console.log("Failed to update access statistics:", error);
-  }
-
-  // Re-fetch the latest text data to ensure updateCount is current
-  let latestText: TextRecord & { owner: boolean } = {
-    ...updatedText,
-    owner: isOwner,
-  };
-  try {
-    if (userId) {
-      const fetched = await getText(userId, params.textId);
-      if (fetched) {
-        latestText = { ...fetched, owner: isOwner };
-      } else {
-        const globalFetched = await getTextByTextId(params.textId);
-        if (globalFetched) {
-          latestText = { ...globalFetched, owner: isOwner };
-        }
-      }
-    } else {
-      const globalFetched = await getTextByTextId(params.textId);
-      if (globalFetched) {
-        latestText = { ...globalFetched, owner: false };
-      }
-    }
-  } catch (error) {
-    console.log("Failed to re-fetch latest text:", error);
-  }
-
-  return data({ text: latestText });
+export const loader = async ({ params }: LoaderFunctionArgs) => {
+  const text = params.textId ? await getTextByTextId(params.textId) : null;
+  if (!text) return redirect("/?message=Text+Not+Found");
+  return data({ text }, { headers: { "Cache-Control": "no-store" } });
 };
 
-interface ActionData {
-  success?: boolean;
-  message?: string;
-}
+interface ActionData { success?: boolean; message?: string }
 
 export const action = async ({ params, request }: ActionFunctionArgs) => {
-  invariant(params.textId, "Missing textId param");
-  const formData = await request.formData();
-  const intent = formData.get("intent") as string;
-
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  const userId = user?.sub || visitor?.sub;
-
-  if (intent === "save") {
-    const content = formData.get("content") as string;
-    const language = formData.get("language") as string;
-    const title = formData.get("title") as string;
-    const updateCount = formData.get("updateCount");
-
-    // Check content size
-    const contentSize = new TextEncoder().encode(content).length;
-    if (contentSize > TEXT_MAX_SIZE) {
-      return data({
-        success: false,
-        message: `Content size (${(contentSize / 1024 / 1024).toFixed(
-          2,
-        )}MB) exceeds the maximum limit of ${(
-          TEXT_MAX_SIZE /
-          1024 /
-          1024
-        ).toFixed(0)}MB`,
-      });
+  if (!params.textId) return data({ success: false, message: "Text not found" }, { status: 404 });
+  const form = await request.formData();
+  const intent = form.get("intent");
+  try {
+    if (intent === "access") {
+      const text = await accessText(params.textId);
+      return Response.json({ success: !!text }, { status: text ? 200 : 404 });
     }
-
-    // Check field sizes
-    if (title && new TextEncoder().encode(title).length > FIELD_MAX_SIZE) {
-      return data({
-        success: false,
-        message: `Title exceeds the maximum limit of ${(
-          FIELD_MAX_SIZE / 1024
-        ).toFixed(1)}KB`,
-      });
+    if (intent === "save") {
+      const content = form.get("content");
+      if (typeof content !== "string") throw new ShareValidationError("Text content is required");
+      const text = await updateTextByTextId(params.textId, { content });
+      return data(text
+        ? { success: true, message: "Saved successfully" }
+        : { success: false, message: "This text share has expired" }, { status: text ? 200 : 404 });
     }
-
-    const now = new Date().toISOString();
-
-    // Try to update with userId first, if userId exists
-    if (userId) {
-      try {
-        await updateText(userId, params.textId, {
-          content,
-          language,
-          title,
-          updateCount: updateCount
-            ? parseInt(updateCount as string)
-            : undefined,
-          lastEditedAt: now,
-        });
-      } catch (error) {
-        // If updateText fails (user is not owner), use global update instead
-        console.log("User is not owner, using global update:", error);
-        try {
-          await updateTextByTextId(params.textId, {
-            content,
-            language,
-            title,
-            updateCount: updateCount
-              ? parseInt(updateCount as string)
-              : undefined,
-            lastEditedAt: now,
-          });
-        } catch (globalError) {
-          console.error("Failed to update text globally:", globalError);
-          return data({
-            success: false,
-            message: "Failed to save text",
-          });
-        }
-      }
-    } else {
-      // Otherwise, update globally by textId
-      await updateTextByTextId(params.textId, {
-        content,
-        language,
-        title,
-        updateCount: updateCount ? parseInt(updateCount as string) : undefined,
-        lastEditedAt: now,
-      });
-    }
-
-    return data({
-      success: true,
-      message: "Saved successfully",
-    });
+    return data({ success: false, message: "Unknown intent" }, { status: 400 });
+  } catch (error) {
+    if (error instanceof ShareValidationError) return data({ success: false, message: error.message }, { status: 400 });
+    throw error;
   }
-
-  if (intent === "delete") {
-    if (!userId) {
-      return data(
-        { success: false, message: "Only the owner can delete this text" },
-        { status: 403 },
-      );
-    }
-
-    // Ownership is the current session's collection membership, not a saved
-    // display flag or knowledge of the public sharing URL.
-    const text = await getText(userId, params.textId);
-    if (!text) {
-      return data(
-        { success: false, message: "Only the owner can delete this text" },
-        { status: 403 },
-      );
-    }
-
-    // Save undo then delete
-    await saveTextUndo(userId, params.textId, text);
-    await deleteText(userId, params.textId);
-    return redirect(
-      `/?message=Deleted&undoId=${encodeURIComponent(
-        params.textId,
-      )}&undoType=text`,
-    );
-  }
-
-  return data({ success: false, message: "Unknown intent" });
 };
 
 export default function TextEditor() {
   const submit = useSubmit();
   const navigation = useNavigation();
+  const navigate = useNavigate();
   const [hasMounted, setHasMounted] = useState(false);
   useEffect(() => {
     setHasMounted(true);
@@ -260,36 +66,32 @@ export default function TextEditor() {
   const [content, setContent] = useState(
     text.content ?? "# Welcome\n\nStart typing...",
   );
-  const [language, setLanguage] = useState(text?.language || "markdown");
-  const [title, setTitle] = useState(
-    text?.title || text?.token || "Untitled Text",
-  );
-
-  // Track last update to prevent overwriting local edits
-  const lastUpdateCountRef = useRef(text?.updateCount || 0);
+  // Editor language is a temporary viewing preference, not saved document data.
+  const [language, setLanguage] = useState("markdown");
+  const title = text.content.split("\n").find((line) => line.trim())?.replace(/^#+\s*/, "").slice(0, 80) || "Untitled Text";
   const currentTextIdRef = useRef(text.id);
-
-  // Update content, title, and language when text changes (from server)
-  // But only if it's a new update (not the same version)
   useEffect(() => {
-    if (text) {
-      const currentUpdateCount = text.updateCount || 0;
-      const lastUpdateCount = lastUpdateCountRef.current;
-
-      // Switching documents must reset the editor even if its revision is lower.
-      // For the same document, preserve local edits until a newer version arrives.
-      if (
-        text.id !== currentTextIdRef.current ||
-        currentUpdateCount > lastUpdateCount
-      ) {
-        setContent(text.content ?? "# Welcome\n\nStart typing...");
-        setLanguage(text.language || "markdown");
-        setTitle(text.title || text.token || "Untitled Text");
-        currentTextIdRef.current = text.id;
-        lastUpdateCountRef.current = currentUpdateCount;
-      }
+    if (text.id !== currentTextIdRef.current) {
+      setContent(text.content);
+      setLanguage("markdown");
+      currentTextIdRef.current = text.id;
     }
   }, [text]);
+  useEffect(() => {
+    // Loaders can run for revalidation and prefetch. Only a mounted document
+    // counts as a reader; background loader requests never extend its TTL.
+    const controller = new AbortController();
+    void fetch(`/texts/${text.id}.data`, {
+      method: "POST",
+      body: new URLSearchParams({ intent: "access" }),
+      signal: controller.signal,
+    }).then((response) => {
+      if (!response.ok) toast.error("This text share has expired");
+    }).catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) toast.error("Could not refresh this text share");
+    });
+    return () => controller.abort();
+  }, [text.id]);
   const [isSaving, setIsSaving] = useState(false);
   const actionData = useActionData<ActionData>();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
@@ -299,25 +101,8 @@ export default function TextEditor() {
     const formData = new FormData();
     formData.append("intent", "save");
     formData.append("content", content);
-    formData.append("language", language);
-    formData.append("title", title);
-    formData.append("updateCount", String((text.updateCount || 0) + 1));
     submit(formData, { method: "post", fetcherKey: "save-text" });
-  }, [content, language, title, text.updateCount, submit]);
-
-  const handleDelete = useCallback(() => {
-    toast.warning("Are you sure? This text will be deleted.", {
-      action: {
-        label: "Yes, delete it!",
-        onClick: () => {
-          const formData = new FormData();
-          formData.append("intent", "delete");
-          submit(formData, { method: "post" });
-        },
-      },
-      cancel: { label: "Cancel", onClick: () => {} },
-    });
-  }, [submit]);
+  }, [content, submit]);
 
   const shownActionDataRef = useRef<typeof actionData>(undefined);
   useEffect(() => {
@@ -384,10 +169,7 @@ export default function TextEditor() {
           const formData = new FormData();
           formData.append("intent", "save");
           formData.append("content", currentContent); // Use content from editor
-          formData.append("language", language);
-          formData.append("title", title);
-          formData.append("updateCount", String((text.updateCount || 0) + 1));
-          submit(formData, { method: "post", fetcherKey: "save-text" });
+                            submit(formData, { method: "post", fetcherKey: "save-text" });
           return false;
         }
       }
@@ -397,7 +179,7 @@ export default function TextEditor() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [content, language, title, text.updateCount, submit]);
+  }, [content, submit]);
 
   const copyToken = async () => {
     if (text?.token) {
@@ -433,7 +215,8 @@ export default function TextEditor() {
             <input
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              readOnly
+              aria-label="Text title from content"
               placeholder="Untitled Text"
             />
             <input
@@ -471,16 +254,9 @@ export default function TextEditor() {
               ? "Saving..."
               : "Save"}
           </button>
-          <button
-            onClick={handleDelete}
-            disabled={text?.owner === false}
-            style={{
-              color: text?.owner === false ? "#ccc" : "#f44250",
-              cursor: text?.owner === false ? "not-allowed" : "pointer",
-              opacity: text?.owner === false ? 0.5 : 1,
-            }}
-          >
-            Delete
+          <button onClick={() => navigate("/")} style={{ position: "relative", color: "#f44250", cursor: "pointer", opacity: 1 }}>
+            <span aria-hidden style={{ visibility: "hidden" }}>Delete</span>
+            <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>Close</span>
           </button>
         </div>
       </div>

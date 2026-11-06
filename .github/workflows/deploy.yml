@@ -14,9 +14,17 @@ jobs:
   verify:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
+    env:
+      W2W_VISUAL_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
+      W2W_VISUAL_MODE: model
     steps:
       - uses: actions/checkout@v4
+      - name: Set validation output paths
+        run: |
+          echo "W2W_BROWSER_OUTPUT_DIR=$RUNNER_TEMP/w2w-browser-test-results" >> "$GITHUB_ENV"
+          echo "W2W_VISUAL_OUTPUT_DIR=$RUNNER_TEMP/w2w-visual-results" >> "$GITHUB_ENV"
+          echo "W2W_VISUAL_BASELINE_ROOT=$RUNNER_TEMP/w2w-visual-base" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         id: server-python
         with:
@@ -34,17 +42,43 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends redis-server
       - name: Validate release scripts and application
+        id: application-check
         env:
           W2W_TEST_PYTHON: ${{ steps.server-python.outputs.python-path }}
         run: |
           bash -n deploy-auto.sh remix/update.sh
           ./deploy-auto.sh verify
       - name: Install browser test runtime
+        id: browser-runtime
         working-directory: remix
         run: npx playwright install --with-deps chromium
-      - name: Validate Google login browser recovery
+      - name: Validate browser recovery and file transfers
         working-directory: remix
         run: npm run test:browser
+      - name: Build the visual comparison baseline
+        if: ${{ !cancelled() && steps.application-check.outcome == 'success' && steps.browser-runtime.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          [[ "$W2W_VISUAL_BASE_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags --depth=1 origin "$W2W_VISUAL_BASE_REVISION"
+          git worktree add --detach "$W2W_VISUAL_BASELINE_ROOT" "$W2W_VISUAL_BASE_REVISION"
+          cd "$W2W_VISUAL_BASELINE_ROOT/remix"
+          npm ci --no-audit --no-fund --strict-ssl=true --engine-strict
+          npm run build
+      - name: Compare browser screenshots
+        if: ${{ !cancelled() && steps.application-check.outcome == 'success' && steps.browser-runtime.outcome == 'success' }}
+        working-directory: remix
+        run: npx playwright test --config playwright.visual.config.ts
+      - name: Upload browser validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w2w-browser-validation-${{ github.event.pull_request.number }}-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/w2w-browser-test-results
+            ${{ runner.temp }}/w2w-visual-results
+          if-no-files-found: warn
+          retention-days: 14
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

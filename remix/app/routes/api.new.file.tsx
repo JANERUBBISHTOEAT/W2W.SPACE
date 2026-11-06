@@ -1,19 +1,9 @@
-import {
-  type ActionFunctionArgs,
-  redirect,
-} from "react-router";
-import { createEmptyFile } from "~/utils/data.server";
-import { requireSessionIdentity } from "~/utils/session.server";
+import { type ActionFunctionArgs } from "react-router";
+import { action as publish } from "./api.files";
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { sub } = await requireSessionIdentity(request);
-  const newFile = await createEmptyFile(sub, false);
-  const formData = await request.formData();
-
-  return redirect(
-    `/files/${newFile.id}/edit` +
-      `?pasted=true` +
-      `&fileName=${formData.get("fileName")}` +
-      `&mimeType=${formData.get("mimeType")}`
-  );
+// Drafts are browser-local. The server only accepts a complete magnet identity.
+export const action = async ({ request, ...args }: ActionFunctionArgs) => {
+  const form = await request.formData();
+  form.set("intent", "publish");
+  return publish({ ...args, request: new Request(request.url, { method: "POST", body: form }) });
 };
