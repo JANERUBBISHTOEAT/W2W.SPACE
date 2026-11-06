@@ -83,6 +83,15 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert((await response.text()).length > 100);
   });
 
+  await t.test("home renders the Pages help link and canonical source repository", async () => {
+    const response = await createClient(app.baseURL)("/");
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /href="https:\/\/janerubbishtoeat\.github\.io\/W2W\.SPACE\/#why-w2w">\| Why W2W\?<\/a>/);
+    assert.match(html, /href="https:\/\/github\.com\/JANERUBBISHTOEAT\/W2W\.SPACE">\| View on GitHub<\/a>/);
+    assert.ok(!html.includes("CSCC09-24F-Project"), "The footer must not use the old repository path");
+  });
+
   await t.test("Remix 2 signed visitor cookies retain identity and reject tampering", async () => {
     const cookie = app.legacySessionCookie({ visitor: { sub: "legacy-remix2-visitor", name: "旧会话" } });
     const request = createClient(app.baseURL, cookie);
