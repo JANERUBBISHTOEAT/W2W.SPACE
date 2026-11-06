@@ -60,7 +60,7 @@ async function localAssets(context, application) {
   await context.routeWebSocket(/^wss?:\/\//, route => route.close());
 }
 
-async function fixtures(context, application) {
+async function fixtures(context, application, { title = textTitle, token } = {}) {
   const publication = await fetch(application.baseURL + "/api/new/token", {
     method: "POST", body: new URLSearchParams({
       intent: "acquireToken", filename, filetype: "application/pdf", filesize: "12345",
@@ -72,15 +72,28 @@ async function fixtures(context, application) {
   const creation = await fetch(application.baseURL + "/api/new/text", { method: "POST", redirect: "manual" });
   expect(creation.status).toBe(302);
   const textPath = creation.headers.get("location");
-  const content = `# ${textTitle}\nA saved text used to verify the editor does not shrink the sidebar.`;
+  const content = `# ${title}\nA saved text used to verify the editor does not shrink the sidebar.`;
   const save = await fetch(application.baseURL + textPath, {
     method: "POST", body: new URLSearchParams({ intent: "save", content }),
   });
   expect(save.status).toBe(200);
   const redis = new Redis({ host: application.redis.host, port: application.redis.port });
   let text;
-  try { text = JSON.parse(await redis.get("w2w:v2:share:text:" + textPath.split("/").pop())); }
-  finally { await redis.quit(); }
+  try {
+    const key = "w2w:v2:share:text:" + textPath.split("/").pop();
+    text = JSON.parse(await redis.get(key));
+    if (token) {
+      // Exercise the widest valid token without allocating thousands of shares.
+      // Keep the real record and alias consistent for the normal loader/save path.
+      const oldToken = text.token;
+      text.token = token;
+      await redis.multi()
+        .del("w2w:v2:token:" + oldToken)
+        .set(key, JSON.stringify(text), "KEEPTTL")
+        .set("w2w:v2:token:" + token, JSON.stringify({ kind: "text", id: text.id }), "PX", await redis.pttl(key))
+        .exec();
+    }
+  } finally { await redis.quit(); }
   const createdAt = new Date().toISOString();
   await context.addInitScript(({ share, text, createdAt, textTitle }) => {
     if (!localStorage.getItem("w2w.files.v1")) {
@@ -94,7 +107,7 @@ async function fixtures(context, application) {
         id: text.id, token: text.token, title: textTitle, lastAccessedAt: text.lastAccessedAt, createdAt,
       }]));
     }
-  }, { share, text, createdAt, textTitle });
+  }, { share, text, createdAt, textTitle: title });
   return { share, textPath, filePath: `/files/${share.id}` };
 }
 
@@ -170,12 +183,15 @@ async function phoneShell(page) {
   return detail;
 }
 
-async function dragSidebar(page, x) {
+async function dragSidebar(page, width) {
   const box = await page.getByRole("separator", { name: "Resize sidebar" }).boundingBox();
   expect(box).not.toBeNull();
-  await page.mouse.move(box.x + box.width / 2, box.y + Math.min(120, box.height / 2));
+  const startX = box.x + box.width / 2;
+  const targetX = startX + width - await sidebarWidth(page);
+  const y = box.y + Math.min(120, box.height / 2);
+  await page.mouse.move(startX, y);
   await page.mouse.down();
-  await page.mouse.move(x, box.y + Math.min(120, box.height / 2), { steps: 12 });
+  await page.mouse.move(targetX, y, { steps: 12 });
   await page.mouse.up();
 }
 
@@ -247,6 +263,101 @@ test.describe("responsive layout", () => {
     await page.getByRole("link", { name: "Home", exact: true }).click();
     expect(await sidebarWidth(page)).toBeCloseTo(restoredWidth, 0);
     await noHorizontalOverflow(page);
+  });
+
+  test("long text titles yield to toolbar controls at narrow and zoomed desktop widths", async ({ page, context, application, browserName }, testInfo) => {
+    const title = "A very long shared text title that should truncate before it can displace controls".slice(0, 80);
+    const fixture = await fixtures(context, application, { title, token: "654321" });
+    await page.goto(application.baseURL + fixture.textPath);
+    await editorReady(page);
+    const titleInput = page.getByRole("textbox", { name: "Text title from content", exact: true });
+    const tokenInput = page.getByRole("textbox", { name: "Token", exact: true });
+    await expect(titleInput).toHaveValue(title);
+    await expect(titleInput).toHaveAttribute("readonly", "");
+    await expect(tokenInput).toHaveValue("654321");
+    const controls = [
+      ["title", titleInput], ["token", tokenInput],
+      ["copy", page.getByRole("button", { name: "Copy", exact: true })],
+      ["language", page.getByRole("combobox", { name: "Select programming language" })],
+      ["save", page.getByRole("button", { name: "Save", exact: true })],
+      ["close", page.getByRole("button", { name: "Close", exact: true })],
+    ];
+    const measureText = element => {
+      const style = getComputedStyle(element);
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      context.font = style.font;
+      return {
+        textWidth: context.measureText(element.value).width,
+        availableWidth: element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+        overflow: style.textOverflow,
+      };
+    };
+    const assertToolbar = async () => {
+      await noHorizontalOverflow(page);
+      const boxes = [];
+      for (const [name, control] of controls) {
+        await insideViewport(page, control);
+        await insideContentWidth(page, control);
+        let box = await control.boundingBox();
+        if (name === "token") {
+          // Copy intentionally sits in the token's right padding. Its hit target
+          // must not cover the actual six digits or any other toolbar control.
+          box = await control.evaluate(element => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            const scale = rect.width / element.offsetWidth;
+            const left = (parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft)) * scale;
+            const right = (parseFloat(style.borderRightWidth) + parseFloat(style.paddingRight)) * scale;
+            return { x: rect.x + left, y: rect.y, width: rect.width - left - right, height: rect.height };
+          });
+        }
+        boxes.push({ name, ...box });
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (const next of boxes.slice(i + 1)) {
+          const current = boxes[i];
+          const horizontal = Math.min(current.x + current.width, next.x + next.width) - Math.max(current.x, next.x);
+          const vertical = Math.min(current.y + current.height, next.y + next.height) - Math.max(current.y, next.y);
+          expect(horizontal > 1 && vertical > 1, `${current.name} overlaps ${next.name}`).toBe(false);
+        }
+      }
+      const titleMetrics = await titleInput.evaluate(measureText);
+      expect(titleMetrics.overflow).toBe("ellipsis");
+      expect(titleMetrics.availableWidth).toBeGreaterThan(0);
+      expect(titleMetrics.textWidth).toBeGreaterThan(titleMetrics.availableWidth);
+      const tokenMetrics = await tokenInput.evaluate(measureText);
+      expect(tokenMetrics.textWidth).toBeLessThanOrEqual(tokenMetrics.availableWidth + 1);
+      const editorWidth = await page.locator("#text-editor-container").evaluate(element => element.clientWidth);
+      const center = box => box.y + box.height / 2;
+      if (editorWidth > 640) {
+        for (const box of boxes) expect(Math.abs(center(box) - center(boxes[0])), `${box.name} remains on the first row`).toBeLessThanOrEqual(2);
+      } else {
+        expect(boxes.find(box => box.name === "save").y).toBeGreaterThanOrEqual(boxes[0].y + boxes[0].height);
+      }
+    };
+    // Narrow CSS viewports model the usable space remaining after browser zoom;
+    // resizing the sidebar also proves the breakpoint follows the editor itself.
+    for (const width of [1100, 1000]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const sidebar of [200, 288, 480, 64]) {
+        await test.step(`viewport ${width}, sidebar ${sidebar}`, async () => {
+          await dragSidebar(page, sidebar === 64 ? 8 : sidebar);
+          await expect.poll(() => sidebarWidth(page)).toBeCloseTo(sidebar, 0);
+          await assertToolbar();
+          if ((width === 1100 && sidebar === 288) || (width === 1000 && sidebar === 480)) {
+            await capture(page, testInfo, `${browserName}-long-toolbar-${width}-sidebar-${sidebar}`);
+          }
+        });
+      }
+    }
+    await page.setViewportSize({ width: 1100, height: 900 });
+    await dragSidebar(page, 288);
+    await page.evaluate(() => { document.documentElement.style.zoom = "1.1"; });
+    await test.step("110 percent layout zoom", async () => {
+      await assertToolbar();
+      await capture(page, testInfo, `${browserName}-long-toolbar-110-percent`);
+    });
   });
 
   test.describe("touch viewports", () => {
