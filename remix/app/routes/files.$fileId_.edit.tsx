@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { fileIconMap, FIELD_MAX_SIZE } from "~/utils/constants";
 import { getLocalFile, putLocalFile, rememberShare, removeLocalFile, useLocalFile } from "~/utils/files.local";
 import type { LocalFile, PublicShare } from "~/utils/files.local";
-import { loadTorrentClient } from "~/utils/webtorrent.client";
+import { seedFile } from "~/utils/webtorrent.client";
 import type { BrowserTorrent } from "~/utils/webtorrent.client";
 
 export const loader = async ({ params, request }: LoaderFunctionArgs) => {
@@ -64,43 +64,32 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
     setName(draftName);
     nameRef.current = draftName;
     seedingRef.current = true;
-    const seedPromise = loadTorrentClient().then((client) => new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("Seeding timeout")), 120000);
-      const fail = (error: unknown) => {
-        clearTimeout(timeout);
-        reject(error);
-      };
-      const seeded = client.seed(selectedFile, (readyTorrent) => {
-        if (mountedRef.current) setTorrent(readyTorrent);
-        const formData = new FormData();
-        formData.set("intent", "acquireToken");
-        formData.set("magnet", readyTorrent.magnetURI);
-        formData.set("filename", selectedFile.name);
-        formData.set("filetype", selectedFile.type);
-        formData.set("filesize", String(selectedFile.size));
-        void fetch(`/api/${savedFile.id}/token`, { method: "POST", body: formData, signal: AbortSignal.timeout(30000) })
-          .then(async (response) => {
-            const result: { token?: string; share?: PublicShare; error?: string } = await response.json();
-            if (!response.ok || typeof result.token !== "string" || !result.token || !result.share) {
-              throw new Error(result.error || "Could not obtain a share token");
-            }
-            clearTimeout(timeout);
-            if (mountedRef.current) setToken(result.token);
-            // Publication may finish after navigation. Keep the local record,
-            // but do not resurrect a draft the user explicitly removed.
-            const current = getLocalFile(savedFile.id);
-            if (current) {
-              if (mountedRef.current && current.displayName === draftName && current.notes === draftNotes) {
-                putLocalFile({ ...current, displayName: nameRef.current, notes: notesRef.current });
-              }
-              const localFile = rememberShare(result.share, "seed", savedFile.id);
-              if (mountedRef.current) navigate(`/files/${localFile.shareId || localFile.id}/?message=File+saved`);
-            }
-            resolve(result.token);
-          }).catch(fail);
-      });
-      seeded.on("error", fail);
-    })).finally(() => { seedingRef.current = false; });
+    const seedPromise = seedFile(selectedFile).then(async (readyTorrent) => {
+      if (mountedRef.current) setTorrent(readyTorrent);
+      const formData = new FormData();
+      formData.set("intent", "acquireToken");
+      formData.set("magnet", readyTorrent.magnetURI);
+      formData.set("filename", selectedFile.name);
+      formData.set("filetype", selectedFile.type);
+      formData.set("filesize", String(selectedFile.size));
+      const response = await fetch(`/api/${savedFile.id}/token`, { method: "POST", body: formData, signal: AbortSignal.timeout(30000) });
+      const result: { token?: string; share?: PublicShare; error?: string } = await response.json();
+      if (!response.ok || typeof result.token !== "string" || !result.token || !result.share) {
+        throw new Error(result.error || "Could not obtain a share token");
+      }
+      if (mountedRef.current) setToken(result.token);
+      // Publication may finish after navigation. Keep the local record,
+      // but do not resurrect a draft the user explicitly removed.
+      const current = getLocalFile(savedFile.id);
+      if (current) {
+        if (mountedRef.current && current.displayName === draftName && current.notes === draftNotes) {
+          putLocalFile({ ...current, displayName: nameRef.current, notes: notesRef.current });
+        }
+        const localFile = rememberShare(result.share, "seed", savedFile.id);
+        if (mountedRef.current) navigate(`/files/${localFile.shareId || localFile.id}/?message=File+saved`);
+      }
+      return result.token;
+    }).finally(() => { seedingRef.current = false; });
     toast.promise(seedPromise, {
       loading: "Seeding...",
       success: (shareToken) => ({
@@ -184,7 +173,7 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
         id="dropzone"
         role="button"
         tabIndex={0}
-        title="💡Stay on page to keep seeding"
+        title="Sharing continues as you browse. Keep this tab open."
         onDrop={(event) => { event.preventDefault(); handleSubmit(event.dataTransfer.files); }}
         onDragOver={(event) => event.preventDefault()}
         onClick={(event) => {
@@ -205,13 +194,13 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
         <span>Name</span>
         <input aria-label="Filename" name="fileName" value={name} onChange={(event) => { nameRef.current = event.target.value; setName(event.target.value); }} placeholder="Filename" type="text" />
         <input aria-label="Token" name="token" value={shareToken} placeholder="Token" type="text" disabled readOnly />
-        <button id="copy-token" type="button" aria-label="Copy token" onClick={() => copy(shareToken)}>Copy</button>
+        <button id="copy-token" type="button" aria-label="Copy token" disabled={!shareToken} onClick={() => copy(shareToken)}>Copy</button>
       </p>
       <div className="file-link-row">
         <label htmlFor="file-magnet">File Link</label>
         <input id="file-magnet" name="_magnet" value={magnet} placeholder="magnet:?" type="text" disabled readOnly />
         <input name="magnet" value={magnet} type="hidden" readOnly />
-        <button id="copy-magnet" type="button" aria-label="Copy file link" onClick={() => copy(magnet)}>Copy</button>
+        <button id="copy-magnet" type="button" aria-label="Copy file link" disabled={!magnet} onClick={() => copy(magnet)}>Copy</button>
       </div>
       <label>
         <span>Notes</span>

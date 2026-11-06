@@ -541,3 +541,64 @@ i {
   font-size: 0.7rem;
   text-decoration: none;
 }
+
+/* The maintenance page's moving bands, using the application's share blue. */
+.transfer-tape {
+  position: fixed;
+  z-index: 60;
+  left: 0;
+  right: 0;
+  height: 4px;
+  overflow: hidden;
+  pointer-events: none;
+  background: #e4f0ff;
+}
+.transfer-tape::before {
+  content: "";
+  position: absolute;
+  inset: 0 -48px 0 0;
+  background: repeating-linear-gradient(135deg, #3992ff 0 12px, #c8e2ff 12px 24px);
+  animation: transfer-slide 2.4s linear infinite;
+}
+.transfer-tape--top { top: 0; }
+.transfer-tape--bottom { bottom: 0; }
+.transfer-tape--bottom::before { animation-direction: reverse; }
+@keyframes transfer-slide { to { transform: translateX(-34px); } }
+.transfer-status-label {
+  position: fixed;
+  z-index: 60;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 5px 10px;
+  border: 1px solid #c8e2ff;
+  border-radius: 8px;
+  background: #f5faff;
+  color: #2468b5;
+  font-size: 12px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 5%);
+}
+.transfer-status-hint { color: #636e7c; white-space: nowrap; }
+.transfer-motion-toggle {
+  padding: 4px;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-size: 10px;
+}
+.transfer-status--paused .transfer-tape::before { animation-play-state: paused; }
+.token-input-hint { display: block; margin-top: 8px; color: #777; font-size: 12px; }
+.token-input-hint[data-error="true"] { color: #b42318; }
+@media (max-width: 640px) {
+  .transfer-status-hint { display: none; }
+  .transfer-status-label { white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .transfer-tape::before { animation: none; }
+  .transfer-motion-toggle { display: none; }
+}

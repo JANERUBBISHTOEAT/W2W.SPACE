@@ -18,6 +18,7 @@ import {
   useSubmit,
 } from "react-router";
 import { Toaster } from "sonner";
+import TransferStatus from "~/components/TransferStatus";
 import "sonner/dist/styles.css";
 import { useEffect } from "react";
 import { randomUUID } from "node:crypto";
@@ -88,6 +89,7 @@ export default function App() {
       </head>
       <body>
         <Toaster richColors position="top-center" />
+        <TransferStatus />
         {/* <script type="module">
           import WebTorrent from 'webtorrent.min.js'
         </script> */}
