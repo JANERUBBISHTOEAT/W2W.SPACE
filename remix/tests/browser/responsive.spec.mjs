@@ -157,12 +157,15 @@ async function sidebarWidth(page) { return (await page.locator("#sidebar").bound
 // These viewports run in touch contexts, so short landscape screens also use
 // the phone navigation even when their width exceeds the portrait breakpoint.
 const phoneViewport = ({ width, height }) => width < 768 || (width <= 1023 && height <= 500);
+const portraitPhoneViewport = ({ width, height }) => width < 768 && height >= width;
 
-async function phoneShell(page) {
+async function phoneShell(page, { safeAreaTop = 0 } = {}) {
   await expect(page.locator("#sidebar")).toBeHidden();
+  const portrait = portraitPhoneViewport(page.viewportSize());
   const header = page.locator("#mobile-header");
   await insideViewport(page, header);
-  expect((await header.boundingBox()).height).toBeCloseTo(56, 0);
+  const headerBox = await header.boundingBox();
+  expect(headerBox.height).toBeCloseTo((portrait ? 72 : 56) + safeAreaTop, 0);
   const detail = await page.locator("#detail").boundingBox();
   expect(detail.x).toBeCloseTo(0, 0);
   expect(detail.width).toBeCloseTo(page.viewportSize().width, 0);
@@ -173,6 +176,10 @@ async function phoneShell(page) {
     const box = await control.boundingBox();
     expect(box.width).toBe(44);
     expect(box.height).toBe(44);
+    if (portrait) {
+      expect(box.y - headerBox.y - safeAreaTop).toBeGreaterThanOrEqual(12);
+      expect(headerBox.y + headerBox.height - box.y - box.height).toBeGreaterThanOrEqual(12);
+    }
   }
   expect((await search.boundingBox()).y).toBeCloseTo((await create.boundingBox()).y, 0);
   const shape = element => {
@@ -181,6 +188,40 @@ async function phoneShell(page) {
   };
   expect(await search.evaluate(shape)).toEqual(await create.evaluate(shape));
   return detail;
+}
+
+async function transferEdges(page, { safeAreaTop = 0, safeAreaBottom = 0 } = {}) {
+  const viewport = page.viewportSize();
+  const status = page.locator(".transfer-status");
+  expect(await status.evaluate(element => getComputedStyle(element).position)).toBe("fixed");
+  await expect(page.locator('.transfer-status-label [role="status"]')).toContainText("Seeding");
+  for (const selector of [".transfer-status-label", ".transfer-tape--top", ".transfer-tape--bottom"]) {
+    await insideViewport(page, page.locator(selector));
+  }
+  // Decorative bands belong to the viewport edges, including the unsafe area.
+  // Interactive controls still need to stay clear of the home indicator/notch.
+  const top = await page.locator(".transfer-tape--top").boundingBox();
+  const bottom = await page.locator(".transfer-tape--bottom").boundingBox();
+  expect(top.y).toBeCloseTo(0, 0);
+  expect(bottom.y + bottom.height).toBeCloseTo(viewport.height, 0);
+  for (const tape of [top, bottom]) {
+    expect(tape.x).toBeCloseTo(0, 0);
+    expect(tape.width).toBeCloseTo(viewport.width, 0);
+  }
+  const label = await page.locator(".transfer-status-label").boundingBox();
+  expect(label.y).toBeGreaterThanOrEqual(safeAreaTop);
+  expect(label.y + label.height).toBeLessThanOrEqual(viewport.height - safeAreaBottom - 8);
+  const home = page.locator("#sidebar > a");
+  if (await home.isVisible()) {
+    const text = await home.locator("h1").boundingBox();
+    expect(bottom.y).toBeGreaterThanOrEqual(text.y + text.height);
+  }
+  for (const control of await page.locator("#sidebar > a:visible, .footer a:visible").all()) {
+    const box = await control.boundingBox();
+    expect(label.x >= box.x + box.width || label.x + label.width <= box.x
+      || label.y >= box.y + box.height || label.y + label.height <= box.y,
+    "transfer controls do not cover navigation links").toBe(true);
+  }
 }
 
 async function dragSidebar(page, width) {
@@ -371,6 +412,11 @@ test.describe("responsive layout", () => {
         const phone = phoneViewport(viewport);
         if (phone) await phoneShell(page);
         else await expect.poll(() => sidebarWidth(page)).toBeCloseTo(288, 0);
+        if (portraitPhoneViewport(viewport)) {
+          const header = await page.locator("#mobile-header").boundingBox();
+          const file = await page.locator("#contact").boundingBox();
+          expect(file.y - header.y - header.height).toBeGreaterThanOrEqual(24);
+        }
         await noHorizontalOverflow(page);
         await insideViewport(page, page.getByRole("button", { name: "Seed", exact: true }));
         await capture(page, testInfo, `${browserName}-file-${viewport.width}x${viewport.height}`);
@@ -519,14 +565,15 @@ test.describe("responsive layout", () => {
       const styles = await page.locator('link[rel="stylesheet"]').evaluateAll(links => links.map(link => new URL(link.href).pathname));
       expect(styles.some(path => /^\/assets\/app-[^/]+\.css$/.test(path))).toBe(true);
       expect(styles.some(path => /^\/assets\/text-editor-[^/]+\.css$/.test(path))).toBe(true);
-      for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
+      await page.getByRole("link", { name: "Home", exact: true }).click();
+      await expect(page.locator('.transfer-status-label [role="status"]')).toContainText("Seeding");
+      for (const viewport of [
+        { width: 390, height: 844 }, { width: 844, height: 390 },
+        { width: 950, height: 536 }, { width: 1024, height: 574 },
+        { width: 1024, height: 768 }, { width: 390, height: 700 },
+      ]) {
         await page.setViewportSize(viewport);
-        const status = page.locator(".transfer-status");
-        expect(await status.evaluate(element => getComputedStyle(element).position)).toBe("fixed");
-        await insideViewport(page, page.locator(".transfer-status-label"));
-        await insideViewport(page, page.locator(".transfer-tape--top"));
-        await insideViewport(page, page.locator(".transfer-tape--bottom"));
-        expect((await page.locator(".transfer-tape--top").boundingBox()).width).toBeGreaterThanOrEqual(viewport.width - 2);
+        await transferEdges(page);
         if (phoneViewport(viewport)) {
           await phoneShell(page);
           await expect(page.locator(".transfer-status-hint")).toBeHidden();
@@ -536,6 +583,28 @@ test.describe("responsive layout", () => {
         }
         await noHorizontalOverflow(page);
         await capture(page, testInfo, `${browserName}-seeding-${viewport.width}x${viewport.height}`);
+      }
+      if (browserName === "chromium") {
+        // Real browser environment values reproduce Safari's non-zero bottom
+        // inset; merely resizing Playwright's WebKit viewport leaves it at zero.
+        const cdp = await context.newCDPSession(page);
+        try {
+          for (const { viewport, insets } of [
+            { viewport: { width: 950, height: 536 }, insets: { top: 0, right: 0, bottom: 34, left: 0 } },
+            { viewport: { width: 950, height: 650 }, insets: { top: 0, right: 0, bottom: 34, left: 0 } },
+            { viewport: { width: 390, height: 844 }, insets: { top: 47, right: 0, bottom: 34, left: 0 } },
+          ]) {
+            await page.setViewportSize(viewport);
+            await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets });
+            await transferEdges(page, { safeAreaTop: insets.top, safeAreaBottom: insets.bottom });
+            if (phoneViewport(viewport)) await phoneShell(page, { safeAreaTop: insets.top });
+            await noHorizontalOverflow(page);
+            await capture(page, testInfo, `${browserName}-seeding-safe-area-${viewport.width}x${viewport.height}`);
+          }
+        } finally {
+          await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: {} });
+          await cdp.detach();
+        }
       }
       await page.setViewportSize({ width: 390, height: 844 });
       const pause = page.getByRole("button", { name: "Pause transfer animation", exact: true });

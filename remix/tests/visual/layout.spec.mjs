@@ -224,7 +224,7 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     expect(mobileHeader.x).toBe(0);
     expect(mobileHeader.y).toBe(0);
     expect(mobileHeader.width).toBe(viewport.width);
-    expect(mobileHeader.height).toBe(56);
+    expect(mobileHeader.height).toBe(72);
     expect(detail.x).toBe(0);
     expect(detail.width).toBe(viewport.width);
     expect(detail.y).toBeCloseTo(mobileHeader.y + mobileHeader.height, 1);
@@ -240,6 +240,10 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     expect({ width: searchBox.width, height: searchBox.height }).toEqual({ width: 44, height: 44 });
     expect({ width: newBox.width, height: newBox.height }).toEqual({ width: searchBox.width, height: searchBox.height });
     expect(newBox.y).toBe(searchBox.y);
+    for (const box of [searchBox, newBox]) {
+      expect(box.y - mobileHeader.y).toBeGreaterThanOrEqual(12);
+      expect(mobileHeader.y + mobileHeader.height - box.y - box.height).toBeGreaterThanOrEqual(12);
+    }
     expect(searchBox.x + searchBox.width <= newBox.x || newBox.x + newBox.width <= searchBox.x).toBe(true);
     expect(searchBox.x).toBeGreaterThanOrEqual(0);
     expect(newBox.x + newBox.width).toBeLessThanOrEqual(viewport.width);
@@ -325,6 +329,10 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     }
   }
   if (scenario === "file") {
+    if (viewport.name === "mobile") {
+      const file = await page.locator("#contact").boundingBox();
+      expect(file.y - mobileHeader.y - mobileHeader.height).toBeGreaterThanOrEqual(24);
+    }
     await usable(page.locator('#contact h1 [role="button"]'), "long filename");
     for (const [index, button] of (await page.locator("#contact button").all()).entries()) await usable(button, `file action ${index}`);
     const headingOverflow = await page.locator("#contact h1").evaluate(element => element.scrollWidth - element.clientWidth);

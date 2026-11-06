@@ -594,8 +594,9 @@ i {
   background: repeating-linear-gradient(135deg, #3992ff 0 12px, #c8e2ff 12px 24px);
   animation: transfer-slide 2.4s linear infinite;
 }
-.transfer-tape--top { top: env(safe-area-inset-top, 0px); }
-.transfer-tape--bottom { bottom: env(safe-area-inset-bottom, 0px); }
+/* Decorative bands trace the viewport edge; only controls avoid safe areas. */
+.transfer-tape--top { top: 0; }
+.transfer-tape--bottom { bottom: 0; }
 .transfer-tape--bottom::before { animation-direction: reverse; }
 @keyframes transfer-slide { to { transform: translateX(-34px); } }
 .transfer-status-label {
@@ -743,6 +744,9 @@ i {
 }
 @media (max-height: 500px) {
   .transfer-status-hint { display: none; }
+}
+@media (max-width: 767px) and (orientation: portrait) {
+  #detail { padding-top: 24px; }
 }
 body:has(.transfer-status) #detail {
   padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
