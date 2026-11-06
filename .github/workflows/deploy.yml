@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       W2W_VISUAL_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
-      W2W_VISUAL_MODE: ui
+      W2W_VISUAL_MODE: responsive
     steps:
       - uses: actions/checkout@v4
       - name: Set validation output paths
@@ -38,6 +38,8 @@ jobs:
           cache-dependency-path: remix/package-lock.json
       - name: Install validation prerequisites
         run: |
+          printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' |
+            sudo tee /etc/apt/apt.conf.d/80-w2w-network > /dev/null
           npm install --global npm@11.19.1
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends redis-server
@@ -50,8 +52,9 @@ jobs:
           ./deploy-auto.sh verify
       - name: Install browser test runtime
         id: browser-runtime
+        timeout-minutes: 8
         working-directory: remix
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Validate browser recovery and file transfers
         working-directory: remix
         run: npm run test:browser
@@ -139,6 +142,8 @@ jobs:
 
       - name: Install validation prerequisites
         run: |
+          printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' |
+            sudo tee /etc/apt/apt.conf.d/80-w2w-network > /dev/null
           npm install --global npm@11.19.1
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends redis-server

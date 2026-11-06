@@ -25,6 +25,7 @@ export default function New() {
 
   return (
     <div
+      className="new-page"
       style={{
         display: "flex",
         height: "100%",

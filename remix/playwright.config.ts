@@ -12,13 +12,23 @@ export default defineConfig({
   expect: { timeout: 5000 },
   outputDir: process.env.W2W_BROWSER_OUTPUT_DIR || join(tmpdir(), "w2w-browser-test-results"),
   reporter: process.env.CI ? "github" : "list",
+  projects: [
+    {
+      name: "chromium",
+      use: {
+        browserName: "chromium",
+        launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined },
+      },
+    },
+    {
+      name: "webkit-responsive",
+      testMatch: "**/responsive.spec.mjs",
+      use: { browserName: "webkit" },
+    },
+  ],
   use: {
-    browserName: "chromium",
     headless: true,
     viewport: { width: 1280, height: 900 },
-    launchOptions: {
-      executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
-    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

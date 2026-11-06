@@ -37,7 +37,7 @@ export default function TransferStatus() {
       <div className="transfer-tape transfer-tape--top" aria-hidden="true" />
       <div className="transfer-tape transfer-tape--bottom" aria-hidden="true" />
       <div className="transfer-status-label">
-        <span role="status" aria-live="polite">{parts.join(" · ")}</span>
+        <span className="transfer-status-message" role="status" aria-live="polite" aria-atomic="true">{parts.join(" · ")}</span>
         <span className="transfer-status-hint">Browse freely · keep this tab open</span>
         <button type="button" className="transfer-motion-toggle" onClick={() => setPaused(!paused)} aria-pressed={paused} title={paused ? "Resume animation (transfers keep running)" : "Pause animation (transfers keep running)"} aria-label={paused ? "Resume transfer animation" : "Pause transfer animation"}>
           <i className={`fas ${paused ? "fa-play" : "fa-pause"}`} aria-hidden="true" />

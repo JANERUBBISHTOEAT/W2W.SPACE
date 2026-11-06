@@ -1,6 +1,5 @@
 import {
   type ActionFunctionArgs,
-  type LinksFunction,
   type LoaderFunctionArgs,
   data,
   redirect,
@@ -17,11 +16,6 @@ import { toast } from "sonner";
 import { getTextByTextId, updateTextByTextId, accessText, cancelTextDraft } from "~/utils/text.server";
 import { ShareValidationError } from "~/utils/share.server";
 import { rememberText, type TextSummary } from "~/utils/texts.local";
-
-export const links: LinksFunction = () => [
-  { rel: "stylesheet", href: "/css/app.css" },
-  { rel: "stylesheet", href: "/css/text-editor.css" },
-];
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const text = params.textId ? await getTextByTextId(params.textId) : null;
@@ -68,8 +62,14 @@ export default function TextEditor() {
   const navigation = useNavigation();
   const navigate = useNavigate();
   const [hasMounted, setHasMounted] = useState(false);
+  const [compactEditor, setCompactEditor] = useState(false);
   useEffect(() => {
+    const compact = window.matchMedia("(max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse)");
+    const update = () => setCompactEditor(compact.matches);
+    update();
     setHasMounted(true);
+    compact.addEventListener("change", update);
+    return () => compact.removeEventListener("change", update);
   }, []);
   const { text } = useLoaderData<typeof loader>();
   const [content, setContent] = useState(
@@ -262,6 +262,7 @@ export default function TextEditor() {
             ))}
           </select>
           <button
+            className="text-save-button"
             onClick={handleSave}
             disabled={busy}
           >
@@ -269,7 +270,7 @@ export default function TextEditor() {
               ? "Saving..."
               : "Save"}
           </button>
-          <button onClick={handleClose} disabled={busy} style={{ position: "relative", color: "#f44250", cursor: busy ? "wait" : "pointer", opacity: 1 }}>
+          <button className="text-close-button" onClick={handleClose} disabled={busy} style={{ position: "relative", color: "#f44250", cursor: busy ? "wait" : "pointer", opacity: 1 }}>
             <span aria-hidden style={{ visibility: "hidden" }}>Delete</span>
             <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>{text.draft ? "Cancel" : "Close"}</span>
           </button>
@@ -287,8 +288,10 @@ export default function TextEditor() {
             onMount={handleEditorDidMount}
             loading={<div className="editor-loading">Loading Editor...</div>}
             options={{
-              fontSize: 14,
-              minimap: { enabled: true },
+              fontSize: compactEditor ? 16 : 14,
+              minimap: { enabled: !compactEditor },
+              wordWrap: compactEditor ? "on" : "off",
+              lineNumbersMinChars: compactEditor ? 3 : 5,
               scrollBeyondLastLine: false,
               automaticLayout: true,
               tabSize: 2,

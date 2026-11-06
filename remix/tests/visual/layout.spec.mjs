@@ -10,7 +10,7 @@ const baselineRoot = process.env.W2W_VISUAL_BASELINE_ROOT;
 const mode = process.env.W2W_VISUAL_MODE || "model";
 const fileId = "visual-file";
 const draftId = "visual-draft";
-const filename = "visual-fixture.txt";
+const filename = mode === "responsive" ? "project-proposal-meeting-final-with-a-long-document-name.md" : "visual-fixture.txt";
 const notes = "A note kept in this browser.";
 const content = "Visual text fixture\nAnonymous text stays editable.\n";
 const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=visual-fixture.txt";
@@ -78,7 +78,7 @@ async function fixtures(application, root, token) {
 
 test.beforeAll(async () => {
   if (!baselineRoot) throw new Error("W2W_VISUAL_BASELINE_ROOT must point to a separately built baseline checkout");
-  expect(["model", "ui"]).toContain(mode);
+  expect(["model", "ui", "responsive"]).toContain(mode);
   const oldHelpers = await import(pathToFileURL(join(resolve(baselineRoot), "remix/tests/helpers.mjs")).href);
   const started = await Promise.allSettled([oldHelpers.startApplication(), startApplication()]);
   if (started.some(result => result.status === "rejected")) {
@@ -137,7 +137,10 @@ async function openScenario(browser, state, scenario, viewport) {
   const response = await page.goto(state.application.baseURL + paths[scenario], { waitUntil: "networkidle" });
   expect(response.status()).toBe(200);
   expect(new URL(page.url()).pathname).toBe(paths[scenario]);
-  await expect(page.locator("#sidebar")).toBeVisible();
+  if (mode === "responsive" && state === current && viewport.width < 768) {
+    await expect(page.locator("#mobile-header")).toBeVisible();
+    await expect(page.locator("#sidebar")).not.toBeVisible();
+  } else await expect(page.locator("#sidebar")).toBeVisible();
   if (scenario === "new") await expect(page.getByRole("button", { name: /New File/ })).toBeVisible();
   if (scenario === "file") await expect(page.locator("#contact")).toContainText(filename);
   if (scenario === "edit") await expect(page.getByRole("textbox", { name: "Filename", exact: true })).toHaveValue(filename);
@@ -186,6 +189,167 @@ async function settleEditor(page) {
   });
 }
 
+async function controlTheme(locator) {
+  return locator.evaluate(element => {
+    const style = getComputedStyle(element);
+    return {
+      fontFamily: style.fontFamily,
+      fontWeight: style.fontWeight,
+      color: style.color,
+      backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
+    };
+  });
+}
+
+async function assertResponsiveLayout(before, after, scenario, viewport, testInfo) {
+  const page = after.page;
+  const sidebar = await page.locator("#sidebar").boundingBox();
+  const detail = await page.locator("#detail").boundingBox();
+  expect(detail).not.toBeNull();
+  const boxes = {};
+  let mobileHeader = null;
+  if (viewport.name === "desktop") {
+    expect(sidebar).not.toBeNull();
+    expect(sidebar.x).toBe(0);
+    expect(sidebar.width).toBe(288);
+    expect(detail.x).toBeCloseTo(sidebar.x + sidebar.width, 1);
+  } else {
+    await expect(page.locator("#sidebar")).not.toBeVisible();
+    expect(sidebar).toBeNull();
+    mobileHeader = await page.locator("#mobile-header").boundingBox();
+    expect(mobileHeader).not.toBeNull();
+    expect(mobileHeader.x).toBe(0);
+    expect(mobileHeader.y).toBe(0);
+    expect(mobileHeader.width).toBe(viewport.width);
+    expect(mobileHeader.height).toBe(56);
+    expect(detail.x).toBe(0);
+    expect(detail.width).toBe(viewport.width);
+    expect(detail.y).toBeCloseTo(mobileHeader.y + mobileHeader.height, 1);
+    const search = page.locator("#mobile-search");
+    const create = page.locator("#mobile-new");
+    for (const button of [search, create]) {
+      await expect(button).toBeVisible();
+      await expect(button).toBeEnabled();
+      await expect(button).toBeInViewport({ ratio: 1 });
+    }
+    const searchBox = await search.boundingBox();
+    const newBox = await create.boundingBox();
+    expect({ width: searchBox.width, height: searchBox.height }).toEqual({ width: 44, height: 44 });
+    expect({ width: newBox.width, height: newBox.height }).toEqual({ width: searchBox.width, height: searchBox.height });
+    expect(newBox.y).toBe(searchBox.y);
+    expect(searchBox.x + searchBox.width <= newBox.x || newBox.x + newBox.width <= searchBox.x).toBe(true);
+    expect(searchBox.x).toBeGreaterThanOrEqual(0);
+    expect(newBox.x + newBox.width).toBeLessThanOrEqual(viewport.width);
+    expect(searchBox.y + searchBox.height).toBeLessThanOrEqual(mobileHeader.y + mobileHeader.height);
+    boxes.mobileSearch = searchBox;
+    boxes.mobileNew = newBox;
+  }
+  expect(detail.width).toBeGreaterThan(240);
+  expect(detail.x + detail.width).toBeLessThanOrEqual(viewport.width + 1);
+  const overflow = await page.evaluate(() => {
+    const detail = document.querySelector("#detail");
+    return {
+      document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      body: document.body.scrollWidth - document.documentElement.clientWidth,
+      detail: detail.scrollWidth - detail.clientWidth,
+    };
+  });
+  expect(overflow.document).toBeLessThanOrEqual(1);
+  expect(overflow.body).toBeLessThanOrEqual(1);
+  expect(overflow.detail).toBeLessThanOrEqual(1);
+
+  async function usable(locator, name) {
+    await expect(locator).toBeVisible();
+    await locator.scrollIntoViewIfNeeded();
+    await expect(locator).toBeInViewport({ ratio: 0.99 });
+    const box = await locator.boundingBox();
+    expect(box, name).not.toBeNull();
+    expect(box.width, name).toBeGreaterThan(0);
+    expect(box.x, name).toBeGreaterThanOrEqual(detail.x - 1);
+    expect(box.x + box.width, name).toBeLessThanOrEqual(viewport.width + 1);
+    boxes[name] = box;
+  }
+
+  const themeSelectors = {
+    home: "#tokenInput",
+    new: 'form:has(input[value="file"]) button',
+    draft: '#contact-form button[type="submit"]',
+    file: '#contact form[action$="edit"] button',
+    edit: '#contact-form button[type="submit"]',
+    text: "#text-editor-header-right button:first-of-type",
+  };
+  const themeSelector = themeSelectors[scenario];
+  const oldTheme = await controlTheme(before.page.locator(themeSelector));
+  const newTheme = await controlTheme(page.locator(themeSelector));
+  if (viewport.name === "mobile" && ["draft", "file", "edit", "text"].includes(scenario)) {
+    // The phone redesign makes Seed/Save primary actions while retaining the
+    // application font and rounded controls. Desktop styling stays unchanged.
+    expect(newTheme).toMatchObject({
+      fontFamily: oldTheme.fontFamily,
+      color: "rgb(255, 255, 255)",
+      backgroundColor: "rgb(57, 146, 255)",
+      borderRadius: "8px",
+    });
+  } else expect(newTheme).toEqual(oldTheme);
+
+  if (scenario === "home") {
+    const input = page.locator("#tokenInput");
+    const initialBox = await input.boundingBox();
+    if (viewport.name === "desktop") {
+      expect(initialBox.y).toBe(215);
+      const oldBox = await before.page.locator("#tokenInput").boundingBox();
+      expect({ width: initialBox.width, height: initialBox.height }).toEqual({ width: oldBox.width, height: oldBox.height });
+    }
+    await usable(input, "token input");
+    await expect(page.getByText("Receive using your token:", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Paste a token, or type all 6 digits to start.", { exact: true })).toHaveCount(0);
+    for (const [index, link] of (await page.locator(".footer a:visible").all()).entries()) await usable(link, `footer link ${index}`);
+  }
+  if (scenario === "new") {
+    for (const name of ["New File", "New Text"]) {
+      const button = page.getByRole("button", { name: new RegExp(name) });
+      await usable(button, name);
+      await expect(button).toBeEnabled();
+    }
+  }
+  if (["draft", "edit"].includes(scenario)) {
+    await usable(page.locator("#dropzone"), "dropzone");
+    const fields = page.locator('#contact-form input:not([type="hidden"]):not([type="file"]), #contact-form textarea, #contact-form button');
+    for (const [index, field] of (await fields.all()).entries()) await usable(field, `file control ${index}`);
+    for (const selector of ["#copy-token", "#copy-magnet"]) {
+      if (scenario === "draft") await expect(page.locator(selector)).toBeDisabled();
+      else await expect(page.locator(selector)).toBeEnabled();
+    }
+  }
+  if (scenario === "file") {
+    await usable(page.locator('#contact h1 [role="button"]'), "long filename");
+    for (const [index, button] of (await page.locator("#contact button").all()).entries()) await usable(button, `file action ${index}`);
+    const headingOverflow = await page.locator("#contact h1").evaluate(element => element.scrollWidth - element.clientWidth);
+    expect(headingOverflow).toBeLessThanOrEqual(1);
+  }
+  if (scenario === "text") {
+    const controls = page.locator("#text-editor-header input, #text-editor-header button, #text-editor-header select");
+    for (const [index, control] of (await controls.all()).entries()) await usable(control, `text control ${index}`);
+    const editor = await page.locator("#text-editor-wrapper").boundingBox();
+    expect(editor.width).toBeGreaterThanOrEqual(240);
+    expect(editor.height).toBeGreaterThanOrEqual(160);
+    expect(editor.x + editor.width).toBeLessThanOrEqual(viewport.width + 1);
+    expect(await page.evaluate(() => globalThis.monaco.editor.getEditors()[0].getValue())).toBe(content);
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Close", exact: true })).toBeEnabled();
+    boxes.editor = editor;
+  }
+  await testInfo.attach("responsive-layout", {
+    body: Buffer.from(JSON.stringify({ viewport, scenario, sidebar, mobileHeader, detail, overflow, controls: boxes }, null, 2)),
+    contentType: "application/json",
+  });
+  testInfo.annotations.push({
+    type: "responsive visual comparison",
+    description: "Full before/after images retain intentional desktop resize controls, the equal-size mobile header actions and content wrapping changes. The new layout must fit its viewport, retain usable controls and preserve control theme; legacy mobile overflow is not an expected image.",
+  });
+}
+
 const scenarios = ["home", "new", "draft", "file", "edit", "text"];
 for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: "mobile", width: 390, height: 844 }]) {
   for (const scenario of scenarios) {
@@ -201,6 +365,10 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
           if (scenario === "text") await settleEditor(view.page);
           await view.page.screenshot({ path, fullPage: true, animations: "disabled" });
           await testInfo.attach(label, { path, contentType: "image/png" });
+        }
+        if (mode === "responsive") {
+          await assertResponsiveLayout(before, after, scenario, viewport, testInfo);
+          return;
         }
         const regions = scenario === "home" && mode === "ui" ? ["#sidebar", ".google-login-container", ".footer"] : [null];
         const masks = [];

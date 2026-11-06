@@ -49,7 +49,7 @@ export default function File() {
   const file = { ...personalFile.share, ...personalFile, filename: personalFile.displayName };
   return (
     <div id="contact">
-      <div>
+      <div className="file-type">
         <i
           // alt={`${file.filename} ${file.token} avatar`}
           key={file.magnet}
@@ -62,9 +62,10 @@ export default function File() {
         ></i>
       </div>
 
-      <div>
-        <h1>
+      <div className="file-description">
+        <h1 className="file-title">
           <span
+            className="file-title-copy"
             role="button"
             tabIndex={0}
             onClick={copyToken(file.token ?? "")}
@@ -77,7 +78,7 @@ export default function File() {
           >
             {file.filename || file.token ? (
               <>
-                {file.filename} #{file.token}
+                <span className="file-name">{file.filename}</span>{" "}<span className="file-token">#{file.token}</span>
               </>
             ) : (
               <i>No Name</i>
@@ -86,17 +87,17 @@ export default function File() {
           <Favorite file={personalFile} />
         </h1>
 
-        <p aria-hidden="true" />
-        {personalFile.status === "expired" ? <p role="status">This share has expired. Your personal notes are kept in this browser.</p> : null}
-        {error ? <p role="alert">{error}</p> : null}
-        {file.size ? <p>Size: {prettyBytes(file.size)}</p> : null}
+        <p className="file-title-spacer" aria-hidden="true" />
+        {personalFile.status === "expired" ? <p className="file-message" role="status">This share has expired. Your personal notes are kept in this browser.</p> : null}
+        {error ? <p className="file-message" role="alert">{error}</p> : null}
+        {file.size ? <p className="file-size">Size: {prettyBytes(file.size)}</p> : null}
         {file.notes ? (
           <>
-            <p>Notes: {file.notes}</p>
+            <p className="file-notes">Notes: {file.notes}</p>
           </>
         ) : null}
 
-        <div>
+        <div className="file-actions">
           <Form action="edit">
             {/* [x]: Make buttons more descriptive (use seed etc.) */}
             <button type="submit">Seed</button>
@@ -135,7 +136,7 @@ export default function File() {
 }
 
 const Favorite: FunctionComponent<{ file: LocalFile }> = ({ file }) => (
-  <form onSubmit={(event) => {
+  <form className="file-favorite" onSubmit={(event) => {
     event.preventDefault();
     putLocalFile({ ...file, favorite: !file.favorite });
   }}>

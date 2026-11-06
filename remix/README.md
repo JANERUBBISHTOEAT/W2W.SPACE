@@ -28,6 +28,21 @@ npm test
 
 Tests start isolated Redis and production app processes, choose temporary ports/data directories, and clean up afterward. They do not use or flush your development Redis. Set `REDIS_SERVER` to the absolute Redis binary/wrapper path when it is not on PATH. Build before testing so HTTP checks exercise the current server artifact.
 
+Browser regressions also exercise Chromium and WebKit responsive layouts, real
+file seeding, and sidebar resizing:
+
+```bash
+npx playwright install --with-deps chromium webkit
+npm run test:browser
+```
+
+The WebKit seeding check uses a fresh, temporary persistent profile because
+[OPFS is unavailable in ephemeral WebKit contexts](https://github.com/microsoft/playwright/issues/18235#issuecomment-1292744784).
+It still uses real file storage and WebTorrent; the profile is removed after the test.
+
+Application and editor styles live in `app/styles/` and are linked through Vite
+asset URLs, so deployments change the URL when the CSS changes.
+
 `npm start` runs the production build. Supply `SESSION_SECRET` securely (at least 32 characters) and Redis connection settings; production refuses the old public fallback secret. `/health` checks Redis and returns the embedded `APP_REVISION`. Production uses `server.mjs`; behind HTTPS termination, configure verified immediate proxy addresses in `TRUSTED_PROXY_CIDRS` and ensure the proxy overwrites forwarding headers. Untrusted peers cannot spoof protocol/host/port. Google login additionally needs the correct `GOOGLE_CLIENT_ID` and HTTPS access to Google's certificate endpoint. Browser WebTorrent requires a secure context (HTTPS or localhost) and working peer/tracker connectivity.
 
 Routes are registered explicitly in `app/routes.ts`; add new route modules there so their URLs and IDs remain part of the application.
