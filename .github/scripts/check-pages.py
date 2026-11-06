@@ -61,11 +61,11 @@ def main():
     assert expected and actual == expected, f"Image mismatch: expected {expected}, rendered {actual}"
     assert len(parser.sections) == 4, "Expected all four screenshot disclosures"
     assert [len(section["images"]) for section in parser.sections] == [1, 1, 4, 4]
-    assert sum(section["headings"] for section in parser.sections) == 8
+    assert [section["headings"] for section in parser.sections] == [0, 0, 3, 4]
     for section in parser.sections:
         text = "".join(section["text"])
         assert not re.search(r"!\[[^\]]*\]\(|(?m:^\s*####\s)", text), "Unrendered screenshot Markdown"
-    print(f"Pages screenshots verified: {sum(actual.values())} local images, 4 disclosures, 8 rendered headings")
+    print(f"Pages screenshots verified: {sum(actual.values())} local images, 4 disclosures, 7 rendered headings")
 
 
 if __name__ == "__main__":
