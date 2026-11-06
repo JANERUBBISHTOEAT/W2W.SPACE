@@ -60,7 +60,7 @@ async function localAssets(context, application) {
   await context.routeWebSocket(/^wss?:\/\//, route => route.close());
 }
 
-async function fixtures(context, application, { title = textTitle, token } = {}) {
+async function fixtures(context, application, { title = textTitle, token, notes = "" } = {}) {
   const publication = await fetch(application.baseURL + "/api/new/token", {
     method: "POST", body: new URLSearchParams({
       intent: "acquireToken", filename, filetype: "application/pdf", filesize: "12345",
@@ -95,11 +95,11 @@ async function fixtures(context, application, { title = textTitle, token } = {})
     }
   } finally { await redis.quit(); }
   const createdAt = new Date().toISOString();
-  await context.addInitScript(({ share, text, createdAt, textTitle }) => {
+  await context.addInitScript(({ share, text, createdAt, textTitle, notes }) => {
     if (!localStorage.getItem("w2w.files.v1")) {
       localStorage.setItem("w2w.files.v1", JSON.stringify([{
         id: "responsive-file", shareId: share.id, share, displayName: share.filename,
-        notes: "", favorite: false, createdAt, direction: "seed",
+        notes, favorite: false, createdAt, direction: "seed",
       }]));
     }
     if (!localStorage.getItem("w2w.texts.v1")) {
@@ -107,7 +107,7 @@ async function fixtures(context, application, { title = textTitle, token } = {})
         id: text.id, token: text.token, title: textTitle, lastAccessedAt: text.lastAccessedAt, createdAt,
       }]));
     }
-  }, { share, text, createdAt, textTitle: title });
+  }, { share, text, createdAt, textTitle: title, notes });
   return { share, textPath, filePath: `/files/${share.id}` };
 }
 
@@ -126,6 +126,19 @@ async function noHorizontalOverflow(page) {
   await expect.poll(() => page.locator("#detail").evaluate(element =>
     element.scrollWidth - element.clientWidth,
   )).toBeLessThanOrEqual(1);
+}
+
+async function noOuterVerticalScroll(page) {
+  const detail = page.locator("#detail");
+  await expect.poll(() => detail.evaluate(element => element.scrollHeight - element.clientHeight),
+    { message: "content that fits must not create an outer vertical scroll range" }).toBeLessThanOrEqual(1);
+  const moved = await detail.evaluate(element => {
+    element.scrollTop = 100;
+    const moved = element.scrollTop;
+    element.scrollTop = 0;
+    return moved;
+  });
+  expect(moved, "the fitting page stays still when scrolling is attempted").toBeLessThanOrEqual(1);
 }
 
 async function insideContentWidth(page, locator) {
@@ -265,6 +278,7 @@ test.describe("responsive layout", () => {
     const sidebar = page.locator("#sidebar");
     await expect(sidebar).toHaveAttribute("data-collapsed", "false");
     await expect.poll(() => sidebarWidth(page)).toBeCloseTo(288, 0);
+    await noOuterVerticalScroll(page);
     await dragSidebar(page, 400);
     await expect.poll(() => sidebarWidth(page)).toBeGreaterThan(385);
     const expandedWidth = await sidebarWidth(page);
@@ -274,6 +288,7 @@ test.describe("responsive layout", () => {
     await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
     await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
     await noHorizontalOverflow(page);
+    await noOuterVerticalScroll(page);
     await capture(page, testInfo, `${browserName}-desktop-expanded-text`);
 
     await dragSidebar(page, 8);
@@ -320,6 +335,7 @@ test.describe("responsive layout", () => {
     await page.getByRole("link", { name: "Home", exact: true }).click();
     expect(await sidebarWidth(page)).toBeCloseTo(restoredWidth, 0);
     await noHorizontalOverflow(page);
+    await noOuterVerticalScroll(page);
   });
 
   test("long text titles yield to toolbar controls at narrow and zoomed desktop widths", async ({ page, context, application, browserName }, testInfo) => {
@@ -420,6 +436,79 @@ test.describe("responsive layout", () => {
   test.describe("touch viewports", () => {
     test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
 
+    test("home fits the available height while long content can still scroll", async ({ page, context, application, browserName }, testInfo) => {
+      const fixture = await fixtures(context, application, { notes: "A detailed note that must remain readable. ".repeat(300) });
+      await context.addInitScript(() => {
+        localStorage.setItem("w2w.sidebar.v1", JSON.stringify({ width: 288, collapsed: false }));
+      });
+      // Keep the real login component and challenge route, supplying only the
+      // external provider's button so layout includes its actual 40px height.
+      await context.route("https://accounts.google.com/gsi/client*", route => route.fulfill({
+        contentType: "application/javascript",
+        body: `window.google = { accounts: { id: {
+          initialize() {}, cancel() {}, disableAutoSelect() {},
+          renderButton(container) {
+            const button = document.createElement("button");
+            button.type = "button"; button.textContent = "Sign in with Google";
+            button.style.height = "40px"; button.style.width = "240px";
+            container.replaceChildren(button);
+          }
+        } } };`,
+      }));
+      const viewports = [
+        { name: "desktop", width: 1440, height: 1000 },
+        { name: "tablet", width: 1024, height: 768 },
+        // The CSS viewport remaining in a 1280x800 window at 110% zoom.
+        { name: "zoom-110", width: 1164, height: 727 },
+        { name: "expanded-landscape", width: 950, height: 536 },
+        { name: "portrait", width: 390, height: 844 },
+        { name: "short-landscape", width: 844, height: 390 },
+      ];
+      for (const signedIn of [true, false]) {
+        const cookie = application.legacySessionCookie(signedIn
+          ? { user: { sub: "scroll-layout-user", name: "Layout Fixture" } }
+          : { visitor: { sub: "scroll-layout-visitor" } });
+        await context.addCookies([{
+          name: "session", value: cookie.slice("session=".length),
+          url: application.baseURL, httpOnly: true, sameSite: "Lax",
+        }]);
+        for (const viewport of viewports) {
+          await test.step(`${signedIn ? "signed in" : "Google login"}, ${viewport.name}`, async () => {
+            await page.setViewportSize({ width: viewport.width, height: viewport.height });
+            await page.goto(application.baseURL + "/");
+            await expect(page.getByRole("button", { name: signedIn ? "Logout" : "Sign in with Google", exact: true })).toBeVisible();
+            await page.evaluate(() => document.fonts.ready);
+            const collapsedStates = phoneViewport(viewport) ? [null] : [false, true];
+            for (const collapsed of collapsedStates) {
+              if (collapsed !== null) {
+                const sidebar = page.locator("#sidebar");
+                if (await sidebar.getAttribute("data-collapsed") !== String(collapsed)) await page.locator("#sidebar-toggle").click();
+                await expect(sidebar).toHaveAttribute("data-collapsed", String(collapsed));
+              }
+              await noHorizontalOverflow(page);
+              await noOuterVerticalScroll(page);
+              await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
+              for (const link of await page.locator(".footer a:visible").all()) await insideViewport(page, link);
+              if ((signedIn && !collapsed) || (!signedIn && viewport.name === "short-landscape")) {
+                await capture(page, testInfo, `${browserName}-home-fitting-${signedIn ? "signed-in" : "login"}-${viewport.name}`);
+              }
+            }
+          });
+        }
+      }
+
+      // An overflow:hidden workaround would strand this real file metadata.
+      await page.setViewportSize({ width: 390, height: 700 });
+      await page.goto(application.baseURL + fixture.filePath);
+      await expect(page.locator(".file-notes")).toBeVisible();
+      const detail = page.locator("#detail");
+      expect(await detail.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(100);
+      await page.getByRole("button", { name: "Delete", exact: true }).scrollIntoViewIfNeeded();
+      expect(await detail.evaluate(element => element.scrollTop)).toBeGreaterThan(100);
+      await insideViewport(page, page.getByRole("button", { name: "Delete", exact: true }));
+      await capture(page, testInfo, `${browserName}-long-file-content-scrolls`);
+    });
+
     test("phone, landscape and tablet pages fit without squeezing the sidebar", async ({ page, context, application, browserName }, testInfo) => {
       const fixture = await fixtures(context, application);
       for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
@@ -434,6 +523,7 @@ test.describe("responsive layout", () => {
           expect(file.y - header.y - header.height).toBeGreaterThanOrEqual(24);
         }
         await noHorizontalOverflow(page);
+        if (viewport.height >= 700) await noOuterVerticalScroll(page);
         await insideViewport(page, page.getByRole("button", { name: "Seed", exact: true }));
         await capture(page, testInfo, `${browserName}-file-${viewport.width}x${viewport.height}`);
         if (phone) {
@@ -466,6 +556,7 @@ test.describe("responsive layout", () => {
         expect(editorBox.width).toBeGreaterThan(200);
         expect(editorBox.height).toBeGreaterThan(100);
         await noHorizontalOverflow(page);
+        await noOuterVerticalScroll(page);
         await capture(page, testInfo, `${browserName}-text-${viewport.width}x${viewport.height}`);
         await page.getByRole("link", { name: "Home", exact: true }).click();
         await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
@@ -477,6 +568,7 @@ test.describe("responsive layout", () => {
         await page.getByRole("button", { name: "New", exact: true }).click();
         await insideViewport(page, page.getByRole("button", { name: /New File/ }));
         await noHorizontalOverflow(page);
+        if (viewport.height >= 700) await noOuterVerticalScroll(page);
         await page.getByRole("button", { name: /New File/ }).click();
         await expect(page.locator("#dropzone")).toBeVisible();
         await noHorizontalOverflow(page);
@@ -495,6 +587,13 @@ test.describe("responsive layout", () => {
       await page.locator("#mobile-new").click();
       await page.getByRole("button", { name: /New Text/ }).click();
       await editorReady(page);
+      await page.evaluate(() => {
+        const editor = globalThis.monaco.editor.getEditors()[0];
+        editor.setValue(Array.from({ length: 200 }, (_, index) => `Scrollable line ${index + 1}`).join("\n"));
+        editor.revealLine(200);
+      });
+      await expect.poll(() => page.evaluate(() => globalThis.monaco.editor.getEditors()[0].getScrollTop())).toBeGreaterThan(100);
+      await noOuterVerticalScroll(page);
       await page.evaluate(() => globalThis.monaco.editor.getEditors()[0].setValue("# Mobile saved note\nSaved from the phone toolbar."));
       const savedPath = new URL(page.url()).pathname;
       await page.getByRole("button", { name: "Save", exact: true }).click();
