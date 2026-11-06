@@ -141,6 +141,13 @@ async function noOuterVerticalScroll(page) {
   expect(moved, "the fitting page stays still when scrolling is attempted").toBeLessThanOrEqual(1);
 }
 
+async function compactHomeFooter(page, safeAreaBottom = 0) {
+  const footer = await page.locator(".footer").boundingBox();
+  const gap = page.viewportSize().height - footer.y - footer.height;
+  expect(gap, "footer keeps a small usable gutter above the viewport edge").toBeGreaterThanOrEqual(Math.max(12, safeAreaBottom) - 1);
+  expect(gap, "footer does not leave an unnecessary blank band below the links").toBeLessThanOrEqual(Math.max(24, safeAreaBottom + 8) + 1);
+}
+
 async function insideContentWidth(page, locator) {
   await expect(locator).toBeVisible();
   const box = await locator.boundingBox();
@@ -489,11 +496,28 @@ test.describe("responsive layout", () => {
               await noOuterVerticalScroll(page);
               await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
               for (const link of await page.locator(".footer a:visible").all()) await insideViewport(page, link);
+              await compactHomeFooter(page);
               if ((signedIn && !collapsed) || (!signedIn && viewport.name === "short-landscape")) {
                 await capture(page, testInfo, `${browserName}-home-fitting-${signedIn ? "signed-in" : "login"}-${viewport.name}`);
               }
             }
           });
+        }
+      }
+
+      if (browserName === "chromium") {
+        const cdp = await context.newCDPSession(page);
+        try {
+          await page.setViewportSize({ width: 390, height: 844 });
+          await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: { top: 0, right: 0, bottom: 34, left: 0 } });
+          await noHorizontalOverflow(page);
+          await noOuterVerticalScroll(page);
+          await compactHomeFooter(page, 34);
+          for (const link of await page.locator(".footer a:visible").all()) await insideViewport(page, link);
+          await capture(page, testInfo, `${browserName}-home-compact-footer-safe-area`);
+        } finally {
+          await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: {} });
+          await cdp.detach();
         }
       }
 
