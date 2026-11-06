@@ -1,0 +1,17 @@
+/* Keep the original label's 24px line and two 16px margins as empty space. */
+.token-input-area {
+  padding-top: 3.5rem;
+}
+
+.token-input-tooltip {
+  z-index: 70;
+  max-width: min(17rem, calc(100vw - 2rem));
+  padding: 6px 10px;
+  border: 1px solid #e4e4e7;
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
+  font-size: 12px;
+  line-height: 1.5;
+  color: #636e7c;
+}

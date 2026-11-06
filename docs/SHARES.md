@@ -3,9 +3,16 @@
 Files use one global Share per normalized BitTorrent v1 infoHash. Hex and base32
 hashes normalize to lowercase hex; tracker parameters and magnet query order do
 not create another Share. A Share stores the magnet and original file metadata,
-a six-digit token, and `lastAccessedAt`. It has no owner, uploader, account ID, or
+a token of 1–6 digits, and `lastAccessedAt`. It has no owner, uploader, account ID, or
 reverse reference to personal files. Publishing the same torrent reuses its
-Share and token; it never replaces the original metadata.
+Share and token; it never replaces the original metadata. New tokens choose a
+random length from one to six digits and do not add leading zeroes. Existing
+tokens, including previously issued six-digit codes with leading zeroes, remain
+unchanged and resolve by their exact string value.
+
+Pasting a token starts receiving immediately. Typed tokens of one to five digits
+wait for Enter; a complete six-digit token starts after a short pause. This keeps
+a short token from being received while the user is still typing a longer one.
 
 A personal File lives in browser local storage (`w2w.files.v1`): its local ID,
 `shareId`, display name, notes and favorite are private to that browser. A cached
@@ -53,7 +60,7 @@ curl -i -X POST http://127.0.0.1:5173/api/new/text
 
 `acquireToken` returns `{share, shareId, fileId, token, magnet, type, intent}`;
 `fileId` is a compatibility alias of the canonical `shareId`. `acquireMagnet`
-accepts a six-digit token and returns the same file fields or `{type:"text",
+accepts a token of 1–6 digits and returns the same file fields or `{type:"text",
 textId}`. `GET /api/files` and POST `intent=access` return `{share}`; an expired
 or missing ID returns 404. Personal edits and deletion have no server mutation.
 

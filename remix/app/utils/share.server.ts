@@ -94,7 +94,9 @@ function argumentsFor(kind: ShareKind) {
 }
 async function publish<T extends SharedRecord>(kind: ShareKind, record: Omit<T, "token" | "lastAccessedAt">): Promise<T> {
   for (let attempt = 0; attempt < 64; attempt++) {
-    const token = randomInt(1_000_000).toString().padStart(6, "0");
+    const length = randomInt(1, 7);
+    const minimum = length === 1 ? 0 : 10 ** (length - 1);
+    const token = randomInt(minimum, 10 ** length).toString();
     const raw = await redis.eval(publishLua, 2, recordKey(kind, record.id), `${PREFIX}token:${token}`,
       ...argumentsFor(kind), JSON.stringify({ ...record, token }));
     if (typeof raw === "string") return JSON.parse(raw) as T;
@@ -136,7 +138,7 @@ export function editTextShare(id: string, content: string) {
 export async function resolveToken(token: string, touch = false): Promise<
   { type: "file"; share: FileShare } | { type: "text"; share: TextShare } | null
 > {
-  if (!/^\d{6}$/.test(token)) return null;
+  if (!/^\d{1,6}$/.test(token)) return null;
   const raw = await redis.get(`${PREFIX}token:${token}`);
   if (!raw) return null;
   const mapping = JSON.parse(raw) as { kind: ShareKind; id: string };
