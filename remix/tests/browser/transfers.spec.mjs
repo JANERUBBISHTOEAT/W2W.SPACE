@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { test as base, expect } from "@playwright/test";
 import TrackerServer from "bittorrent-tracker/server";
 import WebSocket from "ws";
@@ -109,7 +109,7 @@ async function expectReloadConfirmation(page) {
   await dialog.dismiss();
   await reload;
   expect(page.url()).toBe(previousURL);
-  await expect(page.locator(".transfer-status")).toBeVisible();
+  await expect(page.locator(".transfer-status-label")).toBeVisible();
 }
 
 test("a token starts a real download without Enter and transfers survive page navigation", async ({ browser, application }, testInfo) => {
@@ -167,6 +167,9 @@ test("a token starts a real download without Enter and transfers survive page na
     await receivePage.waitForTimeout(900);
     expect(requests).toEqual([]);
     const downloadPromise = receivePage.waitForEvent("download", { timeout: 60000 });
+    // A prior assertion can close the context before this promise is awaited.
+    // Handle rejection immediately so teardown cannot hide the original error.
+    void downloadPromise.catch(() => {});
     await input.fill(share.token);
     await expect.poll(() => requests.length).toBe(1);
     await lookupReady;
@@ -177,13 +180,18 @@ test("a token starts a real download without Enter and transfers survive page na
     releaseLookup();
     await expect(receivePage.locator(".transfer-status")).toContainText("Downloading");
     for (const [name, page] of [["seeding-status-desktop", seedPage], ["downloading-status-desktop", receivePage]]) {
-      await testInfo.attach(name, { body: await page.screenshot({ animations: "disabled" }), contentType: "image/png" });
+      const path = testInfo.outputPath(`${name}.png`);
+      await page.screenshot({ path, animations: "disabled" });
+      await testInfo.attach(name, { path, contentType: "image/png" });
     }
     const desktopViewport = seedPage.viewportSize();
     await seedPage.setViewportSize({ width: 390, height: 844 });
-    await expect(seedPage.locator(".transfer-status")).toBeVisible();
+    // The wrapper has no width: its visible children are fixed to the viewport.
+    await expect(seedPage.locator(".transfer-status-label")).toBeVisible();
+    const mobileScreenshot = testInfo.outputPath("seeding-status-mobile.png");
+    await seedPage.screenshot({ path: mobileScreenshot, animations: "disabled" });
     await testInfo.attach("seeding-status-mobile", {
-      body: await seedPage.screenshot({ animations: "disabled" }), contentType: "image/png",
+      path: mobileScreenshot, contentType: "image/png",
     });
     if (desktopViewport) await seedPage.setViewportSize(desktopViewport);
     receiver.release();
@@ -200,10 +208,9 @@ test("a token starts a real download without Enter and transfers survive page na
     expect(sender.pageErrors).toEqual([]);
     expect(receiver.pageErrors).toEqual([]);
     expect(tracker.errors).toEqual([]);
-    await testInfo.attach("real-webrtc-transfer", {
-      body: JSON.stringify({ bytes: bytes.length, peers: 2, signaling: "local WebSocket tracker", transport: "native WebRTC data channel", contentMatches: true }),
-      contentType: "application/json",
-    });
+    const evidencePath = testInfo.outputPath("real-webrtc-transfer.json");
+    await writeFile(evidencePath, JSON.stringify({ bytes: bytes.length, peers: 2, signaling: "local WebSocket tracker", transport: "native WebRTC data channel", contentMatches: true }));
+    await testInfo.attach("real-webrtc-transfer", { path: evidencePath, contentType: "application/json" });
   } finally {
     releaseLookup?.();
     const peers = await Promise.all([sender, receiver].map(async (peer) => ({
@@ -211,9 +218,9 @@ test("a token starts a real download without Enter and transfers survive page na
       pages: await Promise.all(peer.context.pages().map((page) =>
         page.evaluate(() => window.w2wTestPeerDiagnostics?.()).catch(() => null))),
     })));
-    await testInfo.attach("peer-diagnostics", {
-      body: JSON.stringify({ peers, trackerErrors: tracker.errors }), contentType: "application/json",
-    });
+    const diagnosticsPath = testInfo.outputPath("peer-diagnostics.json");
+    await writeFile(diagnosticsPath, JSON.stringify({ peers, trackerErrors: tracker.errors }));
+    await testInfo.attach("peer-diagnostics", { path: diagnosticsPath, contentType: "application/json" });
     await receiver.stop();
     await sender.stop();
     await tracker.stop();
