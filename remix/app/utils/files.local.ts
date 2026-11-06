@@ -53,6 +53,7 @@ function writeFiles(files: LocalFile[]) {
 }
 
 export function getLocalFile(id: string) {
+  if (/^[a-f0-9]{40}$/i.test(id)) id = id.toLowerCase();
   return listLocalFiles().find((file) => file.id === id || file.shareId === id);
 }
 
@@ -114,6 +115,7 @@ export function useLocalFiles() {
 }
 
 export function useLocalFile(id: string) {
+  if (/^[a-f0-9]{40}$/i.test(id)) id = id.toLowerCase();
   const files = useLocalFiles();
   const file = files.find((entry) => entry.id === id || entry.shareId === id);
   const [loading, setLoading] = useState(true);

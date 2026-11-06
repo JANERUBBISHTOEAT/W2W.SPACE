@@ -177,10 +177,13 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     const before = await redis.pttl(key);
     await readText(first, text.data);
     assert((await redis.pttl(key)) <= before);
-    assert.equal((await second(text.path, { intent: "access" })).status, 200);
+    assert.equal((await second(text.data, { intent: "access" })).status, 200);
     assert((await redis.pttl(key)) > 29 * 86400 * 1000);
     await redis.del(key);
-    assert.equal((await second(text.path, { intent: "save", content: "stale" })).status, 404);
+    response = await second(text.data, { intent: "save", content: "stale" });
+    assert.equal(response.status, 404);
+    assert.equal((await decodeData(response)).success, false);
+    assert.equal((await second(text.data, { intent: "access" })).status, 404);
     assert.equal(await redis.exists(key), 0);
     assert.deepEqual(await redis.keys("user:*"), []);
   });

@@ -81,7 +81,7 @@ export default function TextEditor() {
     // Loaders can run for revalidation and prefetch. Only a mounted document
     // counts as a reader; background loader requests never extend its TTL.
     const controller = new AbortController();
-    void fetch(`/texts/${text.id}`, {
+    void fetch(`/texts/${text.id}.data`, {
       method: "POST",
       body: new URLSearchParams({ intent: "access" }),
       signal: controller.signal,

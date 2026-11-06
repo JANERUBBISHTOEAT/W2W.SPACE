@@ -62,6 +62,7 @@ test("drafts have a stable local URL before a share or token exists", () => {
   assert.equal(bound.id, draft.id);
   assert.equal(bound.shareId, share.id);
   assert.equal(store.getLocalFile(share.id).id, draft.id);
+  assert.equal(store.getLocalFile(share.id.toUpperCase()).id, draft.id);
   assert.equal(store.listLocalFiles().length, 1);
 });
 
