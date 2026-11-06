@@ -36,6 +36,10 @@ npx playwright install --with-deps chromium webkit
 npm run test:browser
 ```
 
+The WebKit seeding check uses a fresh, temporary persistent profile because
+[OPFS is unavailable in ephemeral WebKit contexts](https://github.com/microsoft/playwright/issues/18235#issuecomment-1292744784).
+It still uses real file storage and WebTorrent; the profile is removed after the test.
+
 Application and editor styles live in `app/styles/` and are linked through Vite
 asset URLs, so deployments change the URL when the CSS changes.
 

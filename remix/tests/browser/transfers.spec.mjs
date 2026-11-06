@@ -289,8 +289,10 @@ test("short typing waits for Enter, pasting starts immediately, and six digits s
   const shortToken = await findMissingToken(1);
   const sixDigitToken = await findMissingToken(6);
   await page.goto(application.baseURL + "/");
-  await page.clock.install();
-  await page.clock.pauseAt(new Date());
+  // Pause at a known future instant: the Node and browser clocks can differ by
+  // a few milliseconds, so pauseAt(new Date()) can accidentally move backwards.
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2025-01-01T01:00:00Z"));
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: application.baseURL });
   const input = page.getByRole("textbox", { name: "Share token", exact: true });
   for (const typed of ["1", "12", "123", "1234", "12345"]) {

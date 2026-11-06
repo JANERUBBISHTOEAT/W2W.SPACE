@@ -191,6 +191,6 @@ body:has(.transfer-status) #text-editor-container {
   #text-editor-header { flex-wrap: nowrap; gap: 12px; }
   #text-editor-header-left { flex: 1 1 auto; }
   #text-editor-header-right { width: auto; }
-  #text-editor-header-right > select { flex: none; width: 120px; }
+  #text-editor-header-right > select { flex: none; width: 136px; }
   #text-editor-footer { padding-top: 4px; padding-bottom: 4px; }
 }

@@ -1,4 +1,5 @@
-import { access } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test as base, expect } from "@playwright/test";
@@ -14,6 +15,27 @@ const test = base.extend({
     const application = await startApplication();
     try { await use(application); } finally { await application.stop(); }
   }, { scope: "worker" }],
+});
+const seedTest = test.extend({
+  context: async ({ context, browserName, playwright, contextOptions, headless, viewport, isMobile, hasTouch, colorScheme, reducedMotion }, use) => {
+    if (browserName !== "webkit") return use(context);
+    // WebKit cannot use OPFS in ephemeral contexts. A fresh persistent profile
+    // exercises native file storage as in a regular Safari tab, without sharing
+    // files or browser state with other tests.
+    const profile = await mkdtemp(join(tmpdir(), "w2w-webkit-seed-"));
+    let persistentContext;
+    try {
+      persistentContext = await playwright.webkit.launchPersistentContext(profile, {
+        ...contextOptions, headless, viewport, isMobile, hasTouch, colorScheme, reducedMotion,
+      });
+      // Playwright's context instrumentation also records traces and failure
+      // screenshots for launchPersistentContext; do not start a second trace.
+      await use(persistentContext);
+    } finally {
+      try { await persistentContext?.close(); }
+      finally { await rm(profile, { recursive: true, force: true }); }
+    }
+  },
 });
 
 async function localAssets(context, application) {
@@ -325,7 +347,7 @@ test.describe("responsive layout", () => {
       expect((await lookup.json()).type).toBeNull();
     });
 
-    test("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application, browserName }, testInfo) => {
+    seedTest("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application, browserName }, testInfo) => {
       const browserEvents = [];
       const record = event => { if (browserEvents.length < 100) browserEvents.push(event); };
       page.on("pageerror", error => record({ type: "pageerror", message: error.message, stack: error.stack }));
@@ -337,37 +359,6 @@ test.describe("responsive layout", () => {
       page.on("worker", worker => {
         record({ type: "worker", url: worker.url() });
         worker.on("close", () => record({ type: "worker-close", url: worker.url() }));
-      });
-      await page.addInitScript(() => {
-        const events = globalThis.__seedDiagnostics = [];
-        const record = event => { if (events.length < 100) events.push({ time: performance.now(), ...event }); };
-        record({ type: "capabilities", secureContext: isSecureContext,
-          crypto: !!globalThis.crypto?.subtle, opfs: !!navigator.storage?.getDirectory,
-          nativeWritable: !!globalThis.FileSystemFileHandle?.prototype.createWritable,
-          syncAccess: !!globalThis.FileSystemFileHandle?.prototype.createSyncAccessHandle,
-        });
-        // Observe the actual native operations without replacing their results,
-        // storage backend, hashing algorithm, or WebTorrent's seed lifecycle.
-        for (const [target, name, label] of [
-          [globalThis.crypto?.subtle, "digest", "crypto.digest"],
-          [navigator.storage, "getDirectory", "storage.getDirectory"],
-        ]) {
-          if (!target?.[name]) continue;
-          const original = target[name];
-          target[name] = function (...args) {
-            record({ type: "start", operation: label });
-            return original.apply(this, args).then(value => {
-              record({ type: "success", operation: label });
-              return value;
-            }, error => {
-              record({ type: "failure", operation: label, name: error.name, message: error.message, stack: error.stack });
-              throw error;
-            });
-          };
-        }
-        addEventListener("unhandledrejection", event => record({ type: "unhandledrejection",
-          name: event.reason?.name, message: event.reason?.message, stack: event.reason?.stack,
-        }));
       });
       let legacyStyleRequests = 0;
       await context.route(/\/css\/(app|text-editor)\.css(?:\?.*)?$/, route => {
@@ -400,7 +391,10 @@ test.describe("responsive layout", () => {
             sha1: await probe(() => crypto.subtle.digest("SHA-1", new TextEncoder().encode("W2W seed diagnostic"))),
             opfs: await probe(() => navigator.storage.getDirectory()),
           };
-          return { userAgent: navigator.userAgent, probes, events: globalThis.__seedDiagnostics,
+          return { userAgent: navigator.userAgent, probes, capabilities: {
+            secureContext: isSecureContext, opfs: !!navigator.storage?.getDirectory,
+            nativeWritable: !!globalThis.FileSystemFileHandle?.prototype.createWritable,
+          },
             transferStatus: document.querySelector(".transfer-status")?.textContent,
           };
         }).catch(error => ({ collectionError: error.message }));
