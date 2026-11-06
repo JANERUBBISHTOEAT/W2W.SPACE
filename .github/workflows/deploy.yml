@@ -16,13 +16,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      W2W_BROWSER_OUTPUT_DIR: ${{ runner.temp }}/w2w-browser-test-results
-      W2W_VISUAL_OUTPUT_DIR: ${{ runner.temp }}/w2w-visual-results
-      W2W_VISUAL_BASELINE_ROOT: ${{ runner.temp }}/w2w-visual-base
       W2W_VISUAL_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
       W2W_VISUAL_MODE: model
     steps:
       - uses: actions/checkout@v4
+      - name: Set validation output paths
+        run: |
+          echo "W2W_BROWSER_OUTPUT_DIR=$RUNNER_TEMP/w2w-browser-test-results" >> "$GITHUB_ENV"
+          echo "W2W_VISUAL_OUTPUT_DIR=$RUNNER_TEMP/w2w-visual-results" >> "$GITHUB_ENV"
+          echo "W2W_VISUAL_BASELINE_ROOT=$RUNNER_TEMP/w2w-visual-base" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v6
         id: server-python
         with:
