@@ -153,11 +153,14 @@ async function normalizeRandomToken(page, token) {
   // Normalize only the known random fixture code, retaining all layout, text
   // nodes, typography and controls. Full artifacts above remain unmodified.
   await page.evaluate(value => {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) {
-      const node = walker.currentNode;
-      if (node.parentElement?.closest("script,style")) continue;
-      node.textContent = node.textContent.replaceAll(value, "123456");
+    for (const label of document.querySelectorAll('#sidebar nav a, #contact h1 [role="button"]')) {
+      const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        // Short tokens can also occur in sizes and other ordinary page text.
+        // Normalize only the fixture's token inside its displayed file label.
+        node.textContent = node.textContent === value ? "123456" : node.textContent.replaceAll(`#${value}`, "#123456");
+      }
     }
     for (const input of document.querySelectorAll('input[name="token"]')) {
       if (input.value === value) input.value = "123456";
@@ -201,6 +204,19 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
         }
         const regions = scenario === "home" && mode === "ui" ? ["#sidebar", ".google-login-container", ".footer"] : [null];
         const masks = [];
+        if (scenario === "home" && mode === "ui") {
+          const previousBox = await before.page.locator("#tokenInput").boundingBox();
+          const currentBox = await after.page.locator("#tokenInput").boundingBox();
+          expect(previousBox).not.toBeNull();
+          expect(currentBox).not.toBeNull();
+          // Original 88fcb28 desktop/mobile screenshots and measured DOM both
+          // place the input at y=215. The current PR base removed the label and
+          // moved it upward; restore only that y while retaining its geometry.
+          expect(currentBox.y).toBe(215);
+          expect({ x: currentBox.x, width: currentBox.width, height: currentBox.height }).toEqual({
+            x: previousBox.x, width: previousBox.width, height: previousBox.height,
+          });
+        }
         if (scenario === "home" && mode === "model") {
           // Anonymous File records no longer sync through Google. Normalize
           // this required copy change only; the entire login UI stays tested.

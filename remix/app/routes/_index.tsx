@@ -1,8 +1,10 @@
 import { GoogleOAuthProvider } from "@react-oauth/google";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import type { CredentialResponse } from "@react-oauth/google";
 import {
   type ActionFunctionArgs,
   type LoaderFunctionArgs,
+  type LinksFunction,
   data,
   useFetcher,
   useLoaderData,
@@ -28,6 +30,9 @@ import {
 } from "~/utils/session.server";
 import { receiveFile } from "~/utils/webtorrent.client";
 import { useTransfers } from "~/components/TransferStatus";
+import tokenInputStyles from "~/styles/token-input.css?url";
+
+export const links: LinksFunction = () => [{ rel: "stylesheet", href: tokenInputStyles }];
 
 interface HomeActionData {
   user?: SessionIdentity | null;
@@ -143,9 +148,9 @@ export default function Index() {
     const value = raw.trim();
     if (!value) return;
     clearTimeout(debounceRef.current);
-    if (type === "token" && !/^\d{6}$/.test(value)) {
+    if (type === "token" && !/^\d{1,6}$/.test(value)) {
       setTokenError(true);
-      setTokenStatus("Use the six-digit token from the sender.");
+      setTokenStatus("Use a token with 1–6 digits.");
       return;
     }
     if (requestedRef.current?.value === value && requestedRef.current.type === type) return;
@@ -223,7 +228,7 @@ export default function Index() {
     setTokenValue(value);
     const invalid = Boolean(value.trim()) && !/^\d{1,6}$/.test(value.trim());
     setTokenError(invalid);
-    setTokenStatus(invalid ? "Use the six-digit token from the sender." : "");
+    setTokenStatus(invalid ? "Use a token with 1–6 digits." : "");
     requestedRef.current?.controller.abort();
     requestedRef.current = undefined;
     setLookupPending(false);
@@ -340,41 +345,51 @@ export default function Index() {
 
   return (
     <div id="index-page">
-      <div>
-        <input
-          type="text"
-          name="token"
-          aria-label="Share token"
-          title="Paste a token, or type all 6 digits to start"
-          inputMode="numeric"
-          autoComplete="off"
-          spellCheck={false}
-          value={tokenValue}
-          onChange={(event) => changeToken(event.target.value)}
-          onPaste={(event) => {
-            const text = event.clipboardData.getData("text/plain").trim();
-            const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
-            if (!type) return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (type === "token") {
-              inputValueRef.current = text;
-              setTokenValue(text);
-            }
-            handleDownload(text, type);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              handleDownload(event.currentTarget.value, "token");
-            }
-          }}
-          aria-describedby={tokenStatus ? "token-input-hint" : undefined}
-          aria-invalid={tokenError}
-          aria-busy={lookupPending}
-          className={tokenError ? "wrong-input" : ""}
-          id="tokenInput"
-        />
+      <div className="token-input-area">
+        <Tooltip.Provider delayDuration={250}>
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <input
+                type="text"
+                name="token"
+                aria-label="Share token"
+                inputMode="numeric"
+                autoComplete="off"
+                spellCheck={false}
+                value={tokenValue}
+                onChange={(event) => changeToken(event.target.value)}
+                onPaste={(event) => {
+                  const text = event.clipboardData.getData("text/plain").trim();
+                  const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
+                  if (!type) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (type === "token") {
+                    inputValueRef.current = text;
+                    setTokenValue(text);
+                  }
+                  handleDownload(text, type);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleDownload(event.currentTarget.value, "token");
+                  }
+                }}
+                aria-errormessage={tokenError ? "token-input-hint" : undefined}
+                aria-invalid={tokenError}
+                aria-busy={lookupPending}
+                className={tokenError ? "wrong-input" : ""}
+                id="tokenInput"
+              />
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content className="token-input-tooltip" side="top" sideOffset={8} collisionPadding={12}>
+                Paste to receive, or press Enter after typing.
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
+        </Tooltip.Provider>
         {tokenStatus && <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>}
       </div>
       <div id="fileList">

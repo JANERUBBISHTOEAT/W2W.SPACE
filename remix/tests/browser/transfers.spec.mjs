@@ -112,7 +112,7 @@ async function expectReloadConfirmation(page) {
   await expect(page.locator(".transfer-status-label")).toBeVisible();
 }
 
-test("a token starts a real download without Enter and transfers survive page navigation", async ({ browser, application }, testInfo) => {
+test("a variable-length token starts a real download and transfers survive page navigation", async ({ browser, application }, testInfo) => {
   test.setTimeout(120000);
   const tracker = await startTracker();
   const sender = await localPeerContext(browser, application, tracker);
@@ -137,7 +137,7 @@ test("a token starts a real download without Enter and transfers survive page na
     const response = await published;
     expect(response.status()).toBe(200);
     const share = await response.json();
-    expect(share.token).toMatch(/^\d{6}$/);
+    expect(share.token).toMatch(/^\d{1,6}$/);
     await expect(seedPage.locator(".transfer-status")).toContainText("Seeding");
     await expect(seedPage).toHaveURL(/\/files\/[^/]+\/?(?:\?.*)?$/);
     await seedPage.getByRole("link", { name: "Home", exact: true }).click();
@@ -161,9 +161,9 @@ test("a token starts a real download without Enter and transfers survive page na
       await route.fulfill({ response });
     });
     const input = receivePage.getByRole("textbox", { name: "Share token", exact: true });
-    await input.fill(share.token.slice(0, 5));
-    // Exceed the documented 600 ms debounce: an incomplete token must not start
-    // a lookup or accidentally resolve a shorter token's prefix.
+    await input.fill("12345");
+    // Typed tokens shorter than six digits wait for Enter, even if this prefix
+    // already identifies a valid share. Six-digit typing still uses 600 ms.
     await receivePage.waitForTimeout(900);
     expect(requests).toEqual([]);
     const downloadPromise = receivePage.waitForEvent("download", { timeout: 60000 });
@@ -171,6 +171,7 @@ test("a token starts a real download without Enter and transfers survive page na
     // Handle rejection immediately so teardown cannot hide the original error.
     void downloadPromise.catch(() => {});
     await input.fill(share.token);
+    if (share.token.length < 6) await input.press("Enter");
     await expect.poll(() => requests.length).toBe(1);
     await lookupReady;
     // An accepted download intent survives navigation even while its real
@@ -256,6 +257,7 @@ test("editing a token discards an earlier successful lookup", async ({ page, app
     await page.goto(application.baseURL + "/");
     const input = page.getByRole("textbox", { name: "Share token", exact: true });
     await input.fill(token);
+    if (token.length < 6) await input.press("Enter");
     await ready;
     await input.fill("");
     release();
@@ -267,34 +269,90 @@ test("editing a token discards an earlier successful lookup", async ({ page, app
   } finally { release(); }
 });
 
-test("pasting starts a lookup and the same missing token can be retried with Enter", async ({ page, context, application }) => {
+test("short typing waits for Enter, pasting starts immediately, and six digits start automatically", async ({ page, context, application }) => {
   const requests = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/api/new/token" && request.method() === "POST") requests.push(request.postData());
   });
-  // Allocation is random, so even 000000 could already belong to a share.
-  let missingToken = "";
-  for (let candidate = 0; candidate < 10; candidate++) {
-    const token = String(candidate).padStart(6, "0");
-    const response = await fetch(application.baseURL + "/api/new/token", {
-      method: "POST", body: new URLSearchParams({ intent: "acquireMagnet", token }),
-    });
-    expect(response.ok).toBe(true);
-    if (!(await response.json()).type) { missingToken = token; break; }
-  }
-  expect(missingToken).toMatch(/^\d{6}$/);
+  // Find unused aliases without assuming which short tokens other tests own.
+  const findMissingToken = async (length) => {
+    for (let candidate = 0; candidate < 10; candidate++) {
+      const token = String(candidate).padStart(length, "0");
+      const response = await fetch(application.baseURL + "/api/new/token", {
+        method: "POST", body: new URLSearchParams({ intent: "acquireMagnet", token }),
+      });
+      expect(response.ok).toBe(true);
+      if (!(await response.json()).type) return token;
+    }
+    throw new Error(`No unused ${length}-digit token available`);
+  };
+  const shortToken = await findMissingToken(1);
+  const sixDigitToken = await findMissingToken(6);
   await page.goto(application.baseURL + "/");
+  await page.clock.install();
+  await page.clock.pauseAt(new Date());
   await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: application.baseURL });
-  await page.evaluate((token) => navigator.clipboard.writeText(token), missingToken);
   const input = page.getByRole("textbox", { name: "Share token", exact: true });
-  await input.click();
-  await input.press("Control+V");
+  for (const typed of ["1", "12", "123", "1234", "12345"]) {
+    await input.fill(typed);
+    await page.clock.runFor(700);
+    expect(requests).toHaveLength(0);
+  }
+  await input.fill(shortToken);
+  await input.press("Enter");
   await expect.poll(() => requests.length).toBe(1);
   await expect(page.locator("#token-input-hint")).toContainText("No share found");
   await input.press("Enter");
   await expect.poll(() => requests.length).toBe(2);
   await expect(page.locator("#token-input-hint")).toContainText("No share found");
+
+  await input.fill("");
+  await page.evaluate((token) => navigator.clipboard.writeText(token), shortToken);
+  await input.click();
+  await input.press("Control+V");
+  // The page clock remains paused: paste must issue its request immediately,
+  // without waiting for the typing debounce to advance.
+  await expect.poll(() => requests.length).toBe(3);
+  await expect(page.locator("#token-input-hint")).toContainText("No share found");
+
+  await input.fill(sixDigitToken);
+  await page.clock.runFor(599);
+  expect(requests).toHaveLength(3);
+  await page.clock.runFor(1);
+  await expect.poll(() => requests.length).toBe(4);
+  await expect(page.locator("#token-input-hint")).toContainText("No share found");
   await expect(page.locator(".transfer-status")).toHaveCount(0);
+});
+
+test("token guidance appears on hover without moving the input and closes with Escape", async ({ page, application }, testInfo) => {
+  await page.goto(application.baseURL + "/");
+  const input = page.getByRole("textbox", { name: "Share token", exact: true });
+  const tooltip = page.getByRole("tooltip");
+  const guidance = "Paste to receive, or press Enter after typing.";
+  await expect(input).toBeVisible();
+  expect(await input.getAttribute("title")).toBeNull();
+  await expect(page.getByText("Receive using your token:", { exact: true })).toHaveCount(0);
+  await expect(page.locator("#token-input-hint")).toHaveCount(0);
+  await expect(tooltip).toHaveCount(0);
+  const originalBox = await input.boundingBox();
+  expect(originalBox).not.toBeNull();
+  await input.hover();
+  await expect(tooltip).toHaveText(guidance);
+  await expect(tooltip).toBeVisible();
+  expect(await input.boundingBox()).toEqual(originalBox);
+  const screenshot = testInfo.outputPath("token-tooltip-desktop.png");
+  await page.screenshot({ path: screenshot, animations: "disabled" });
+  await testInfo.attach("token-tooltip-desktop", { path: screenshot, contentType: "image/png" });
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
+  expect(await input.boundingBox()).toEqual(originalBox);
+
+  await page.mouse.move(0, 0);
+  await input.focus();
+  await expect(tooltip).toHaveText(guidance);
+  await page.keyboard.press("Escape");
+  await expect(tooltip).toHaveCount(0);
+  await expect(input).toHaveValue("");
 });
 
 test("an idle browser reloads without an interruption prompt", async ({ page, application }) => {

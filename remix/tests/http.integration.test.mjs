@@ -113,7 +113,7 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     const duplicate = await response.json();
     assert.equal(duplicate.shareId, hash);
     assert.equal(duplicate.token, created.token);
-    assert.match(created.token, /^\d{6}$/);
+    assert.match(created.token, /^\d{1,6}$/);
     assert.equal(duplicate.share.filename, "original.txt");
     assert.equal(duplicate.share.size, 12);
     assert.equal(duplicate.share.magnet, created.share.magnet);
@@ -127,6 +127,46 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     assert.equal((await second(`/files/${hash}/destroy`, {})).status, 405);
     assert.equal((await second("/api/restore", { undoId: hash, undoType: "file" })).status, 410);
     assert.equal((await (await first(`/api/files?shareId=${hash}`)).json()).share.id, hash);
+  });
+
+  await t.test("short and existing padded tokens resolve without changing their identity", async (t) => {
+    const request = createClient(app.baseURL);
+    let shortToken;
+    for (let candidate = 0; candidate < 10; candidate++) {
+      const token = String(candidate);
+      if (!await redis.exists(`w2w:v2:token:${token}`)) { shortToken = token; break; }
+    }
+    assert.match(shortToken, /^\d$/);
+    const fixtures = [
+      { id: "d1".repeat(20), token: shortToken },
+      { id: "d2".repeat(20), token: "000007" },
+    ];
+    for (const fixture of fixtures) {
+      const shareKey = `w2w:v2:share:file:${fixture.id}`;
+      const tokenKey = `w2w:v2:token:${fixture.token}`;
+      assert.equal(await redis.exists(shareKey, tokenKey), 0);
+      const share = {
+        ...fixture, magnet: `magnet:?xt=urn:btih:${fixture.id}`,
+        filename: "existing-share.txt", size: 12, type: "text/plain",
+        lastAccessedAt: new Date().toISOString(),
+      };
+      await redis.set(shareKey, JSON.stringify(share), "EX", 600);
+      await redis.set(tokenKey, JSON.stringify({ kind: "file", id: fixture.id }), "EX", 600);
+      t.after(() => redis.del(shareKey, tokenKey));
+
+      let response = await request("/api/new/token", { intent: "acquireMagnet", token: fixture.token });
+      assert.equal(response.status, 200);
+      const received = await response.json();
+      assert.equal(received.fileId, fixture.id);
+      assert.equal(received.token, fixture.token);
+      response = await request(`/token/${fixture.token}`);
+      assert.equal(response.headers.get("location"), `/?token=${fixture.token}`);
+
+      response = await request("/api/new/token", { intent: "acquireToken", magnet: share.magnet });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).token, fixture.token);
+      assert.equal(JSON.parse(await redis.get(shareKey)).token, fixture.token);
+    }
   });
 
   await t.test("metadata polling and router preload do not renew, active access does", async () => {
@@ -193,7 +233,9 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     for (const magnet of ["https://example.com", "magnet:?xt=urn:btih:no", `magnet:?xt=urn:btih:${"c".repeat(40)}&xt=urn:btih:${"d".repeat(40)}`]) {
       assert.equal((await request("/api/new/token", { intent: "acquireToken", magnet })).status, 400);
     }
-    assert.equal((await request("/api/new/token", { intent: "acquireMagnet", token: "123" })).status, 400);
+    for (const token of ["1234567", "12x", ""]) {
+      assert.equal((await request("/api/new/token", { intent: "acquireMagnet", token })).status, 400);
+    }
     const missing = await request("/api/new/token", { intent: "acquireMagnet", token: "000000" });
     assert.equal(missing.status, 200);
     assert.equal((await missing.json()).type, null);

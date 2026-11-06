@@ -15,7 +15,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "acquireMagnet") {
       const token = form.get("token");
-      if (typeof token !== "string" || !/^\d{6}$/.test(token)) throw new ShareValidationError("A six-digit token is required");
+      if (typeof token !== "string" || !/^\d{1,6}$/.test(token)) throw new ShareValidationError("A token of 1–6 digits is required");
       const result = await resolveToken(token, true);
       if (!result) return Response.json({ intent, type: null, magnet: null, token });
       if (result.type === "text") return Response.json({ intent, type: "text", textId: result.share.id, magnet: null, token });

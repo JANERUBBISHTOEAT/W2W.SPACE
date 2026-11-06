@@ -19,7 +19,7 @@
 - 🚀 **Fast P2P Transfer**: Direct peer-to-peer file sharing using WebTorrent protocol
 - 🔒 **Privacy-First**: No login required, no files stored on servers
 - 💾 **Large File Support**: No file size limitations
-- 🔑 **Token-Based Access**: Simple 6-digit code for finding a shared file or text
+- 🔑 **Token-Based Access**: Simple 1–6 digit code for finding a shared file or text
 - 🎨 **Modern UI**: Clean and intuitive user interface built with Remix
 - ⚡ **Real-Time Progress**: Live transfer progress with peer information
 - 🌍 **Browser-Based**: Works in all modern browsers (Chrome, Firefox, Safari, Edge)
@@ -45,7 +45,7 @@ Perfect for transferring files to public computers:
 ✅ **No Upload Wait** - Download starts immediately  
 ✅ **No Size Limits** - Transfer files of any size  
 ✅ **No Speed Limits** - Full bandwidth utilization  
-✅ **Short Tokens** - Simple 6-digit codes instead of long URLs
+✅ **Short Tokens** - Simple 1–6 digit codes instead of long URLs
 
 ---
 
