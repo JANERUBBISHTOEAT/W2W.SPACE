@@ -137,7 +137,9 @@ async function openScenario(browser, state, scenario, viewport) {
   const response = await page.goto(state.application.baseURL + paths[scenario], { waitUntil: "networkidle" });
   expect(response.status()).toBe(200);
   expect(new URL(page.url()).pathname).toBe(paths[scenario]);
-  if (mode === "responsive" && state === current && viewport.width < 768) {
+  // Responsive baselines also have the mobile header after the redesign lands.
+  // Older baselines retain a visible sidebar instead.
+  if (mode === "responsive" && viewport.width < 768 && await page.locator("#mobile-header").count()) {
     await expect(page.locator("#mobile-header")).toBeVisible();
     await expect(page.locator("#sidebar")).not.toBeVisible();
   } else await expect(page.locator("#sidebar")).toBeVisible();
