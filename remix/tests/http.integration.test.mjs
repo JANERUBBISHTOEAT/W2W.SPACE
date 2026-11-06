@@ -254,7 +254,7 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
       const lookup = await request("/api/new/token", { intent: "acquireMagnet", token: text.token });
       assert.equal((await lookup.json()).type, null);
       assert.equal((await request(textPath, { intent: "cancel" })).status, 302, "cancel is idempotent");
-      assert.equal((await request(textPath, { intent: "save", content: "late save" })).status, 404);
+      assert.equal((await request(dataPath(textPath, textRoute), { intent: "save", content: "late save" })).status, 404);
       assert.equal(await redis.exists(recordKey, tokenKey), 0);
     }
   });
