@@ -216,11 +216,27 @@ async function transferEdges(page, { safeAreaTop = 0, safeAreaBottom = 0 } = {})
     const text = await home.locator("h1").boundingBox();
     expect(bottom.y).toBeGreaterThanOrEqual(text.y + text.height);
   }
-  for (const control of await page.locator("#sidebar > a:visible, .footer a:visible").all()) {
-    const box = await control.boundingBox();
-    expect(label.x >= box.x + box.width || label.x + label.width <= box.x
-      || label.y >= box.y + box.height || label.y + label.height <= box.y,
-    "transfer controls do not cover navigation links").toBe(true);
+  const detail = page.locator("#detail");
+  const scrollTop = await detail.evaluate(element => element.scrollTop);
+  try {
+    for (const control of await page.locator("#sidebar > a:visible, .footer a:visible").all()) {
+      // Short screens can scroll the home content. Its scrollport must reserve
+      // the fixed transfer card's space, so bringing a link into view also
+      // makes it usable instead of leaving it behind the card.
+      await control.scrollIntoViewIfNeeded();
+      await insideViewport(page, control);
+      const box = await control.boundingBox();
+      if (await control.evaluate(element => !!element.closest(".footer"))) {
+        const clip = await detail.boundingBox();
+        expect(box.y).toBeGreaterThanOrEqual(clip.y - 1);
+        expect(box.y + box.height).toBeLessThanOrEqual(clip.y + clip.height + 1);
+      }
+      expect(label.x >= box.x + box.width || label.x + label.width <= box.x
+        || label.y >= box.y + box.height || label.y + label.height <= box.y,
+      "transfer controls do not cover navigation links").toBe(true);
+    }
+  } finally {
+    await detail.evaluate((element, value) => { element.scrollTop = value; }, scrollTop);
   }
 }
 
@@ -592,6 +608,7 @@ test.describe("responsive layout", () => {
           for (const { viewport, insets } of [
             { viewport: { width: 950, height: 536 }, insets: { top: 0, right: 0, bottom: 34, left: 0 } },
             { viewport: { width: 950, height: 650 }, insets: { top: 0, right: 0, bottom: 34, left: 0 } },
+            { viewport: { width: 844, height: 390 }, insets: { top: 0, right: 0, bottom: 34, left: 0 } },
             { viewport: { width: 390, height: 844 }, insets: { top: 47, right: 0, bottom: 34, left: 0 } },
           ]) {
             await page.setViewportSize(viewport);
