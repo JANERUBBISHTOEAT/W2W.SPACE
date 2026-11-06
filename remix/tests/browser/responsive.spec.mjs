@@ -184,6 +184,14 @@ test.describe("responsive layout", () => {
     await dragSidebar(page, 8);
     await expect(sidebar).toHaveAttribute("data-collapsed", "true");
     await expect.poll(() => sidebarWidth(page)).toBeCloseTo(64, 0);
+    const collapsedSearch = page.locator("#sidebar .sidebar-search-button");
+    const collapsedNew = page.locator("#sidebar .sidebar-new-form button");
+    for (const control of [collapsedSearch, collapsedNew]) {
+      await expect(control).toBeVisible();
+      const box = await control.boundingBox();
+      expect({ width: box.width, height: box.height }).toEqual({ width: 44, height: 44 });
+    }
+    expect((await collapsedNew.boundingBox()).x).toBe((await collapsedSearch.boundingBox()).x);
     const fileLink = page.locator(`#sidebar nav a[href="${fixture.filePath}"]`);
     await expect(fileLink.locator(".sidebar-file-icon.fa-file-pdf")).toBeVisible();
     await expect(fileLink.locator(".sidebar-entry-label")).toBeHidden();
@@ -318,6 +326,49 @@ test.describe("responsive layout", () => {
     });
 
     test("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application, browserName }, testInfo) => {
+      const browserEvents = [];
+      const record = event => { if (browserEvents.length < 100) browserEvents.push(event); };
+      page.on("pageerror", error => record({ type: "pageerror", message: error.message, stack: error.stack }));
+      page.on("console", message => {
+        if (["error", "warning"].includes(message.type())) {
+          record({ type: message.type(), message: message.text() });
+        }
+      });
+      page.on("worker", worker => {
+        record({ type: "worker", url: worker.url() });
+        worker.on("close", () => record({ type: "worker-close", url: worker.url() }));
+      });
+      await page.addInitScript(() => {
+        const events = globalThis.__seedDiagnostics = [];
+        const record = event => { if (events.length < 100) events.push({ time: performance.now(), ...event }); };
+        record({ type: "capabilities", secureContext: isSecureContext,
+          crypto: !!globalThis.crypto?.subtle, opfs: !!navigator.storage?.getDirectory,
+          nativeWritable: !!globalThis.FileSystemFileHandle?.prototype.createWritable,
+          syncAccess: !!globalThis.FileSystemFileHandle?.prototype.createSyncAccessHandle,
+        });
+        // Observe the actual native operations without replacing their results,
+        // storage backend, hashing algorithm, or WebTorrent's seed lifecycle.
+        for (const [target, name, label] of [
+          [globalThis.crypto?.subtle, "digest", "crypto.digest"],
+          [navigator.storage, "getDirectory", "storage.getDirectory"],
+        ]) {
+          if (!target?.[name]) continue;
+          const original = target[name];
+          target[name] = function (...args) {
+            record({ type: "start", operation: label });
+            return original.apply(this, args).then(value => {
+              record({ type: "success", operation: label });
+              return value;
+            }, error => {
+              record({ type: "failure", operation: label, name: error.name, message: error.message, stack: error.stack });
+              throw error;
+            });
+          };
+        }
+        addEventListener("unhandledrejection", event => record({ type: "unhandledrejection",
+          name: event.reason?.name, message: event.reason?.message, stack: event.reason?.stack,
+        }));
+      });
       let legacyStyleRequests = 0;
       await context.route(/\/css\/(app|text-editor)\.css(?:\?.*)?$/, route => {
         legacyStyleRequests++;
@@ -325,13 +376,39 @@ test.describe("responsive layout", () => {
       });
       await page.goto(application.baseURL + "/new");
       await page.getByRole("button", { name: /New File/ }).click();
-      const published = page.waitForResponse(response => /\/api\/[^/]+\/token/.test(new URL(response.url()).pathname)
-        && response.request().method() === "POST" && response.request().postData()?.includes("acquireToken"));
-      await page.locator("#fileInput").setInputFiles({
-        name: `${browserName}-mobile-seed.txt`, mimeType: "text/plain",
-        buffer: Buffer.from("Actual mobile seeding fixture.\n".repeat(2048)),
-      });
-      expect((await published).status()).toBe(200);
+      try {
+        const [published] = await Promise.all([
+          page.waitForResponse(response => /\/api\/[^/]+\/token/.test(new URL(response.url()).pathname)
+            && response.request().method() === "POST" && response.request().postData()?.includes("acquireToken"), { timeout: 30000 }),
+          page.locator("#fileInput").setInputFiles({
+            name: `${browserName}-mobile-seed.txt`, mimeType: "text/plain",
+            buffer: Buffer.from("Actual mobile seeding fixture.\n".repeat(2048)),
+          }),
+        ]);
+        expect(published.status()).toBe(200);
+      } catch (error) {
+        const diagnostics = await page.evaluate(async () => {
+          const probe = async operation => {
+            try {
+              return await Promise.race([
+                operation().then(() => "success"),
+                new Promise(resolve => setTimeout(() => resolve("timed out"), 3000)),
+              ]);
+            } catch (error) { return { name: error.name, message: error.message, stack: error.stack }; }
+          };
+          const probes = {
+            sha1: await probe(() => crypto.subtle.digest("SHA-1", new TextEncoder().encode("W2W seed diagnostic"))),
+            opfs: await probe(() => navigator.storage.getDirectory()),
+          };
+          return { userAgent: navigator.userAgent, probes, events: globalThis.__seedDiagnostics,
+            transferStatus: document.querySelector(".transfer-status")?.textContent,
+          };
+        }).catch(error => ({ collectionError: error.message }));
+        await testInfo.attach("real-seeding-diagnostics", {
+          body: JSON.stringify({ browserEvents, ...diagnostics }, null, 2), contentType: "application/json",
+        });
+        throw error;
+      }
       await expect(page.locator('.transfer-status-label [role="status"]')).toContainText("Seeding");
       expect(legacyStyleRequests).toBe(0);
       const styles = await page.locator('link[rel="stylesheet"]').evaluateAll(links => links.map(link => new URL(link.href).pathname));

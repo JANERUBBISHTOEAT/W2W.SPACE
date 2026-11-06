@@ -107,6 +107,11 @@
   height: 44px;
   padding: 8px;
 }
+#sidebar[data-collapsed="true"] .sidebar-new-form {
+  display: flex;
+  width: 44px;
+  height: 44px;
+}
 #sidebar[data-collapsed="true"] nav { padding: 12px 8px; scrollbar-width: none; }
 #sidebar[data-collapsed="true"] nav::-webkit-scrollbar { display: none; }
 #sidebar[data-collapsed="true"] nav a {
