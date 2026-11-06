@@ -25,6 +25,7 @@ import { randomUUID } from "node:crypto";
 import { commitSession, getSession, getUserSession, getVisitorSession } from "~/utils/session.server";
 import { getLocalFile, putLocalFile, useLocalFiles } from "~/utils/files.local";
 import type { PublicShare } from "~/utils/files.local";
+import { useLocalTexts } from "~/utils/texts.local";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
@@ -56,6 +57,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function App() {
   const { q } = useLoaderData<typeof loader>();
   const files = useLocalFiles();
+  const texts = useLocalTexts();
   const shareIds = [...new Set(files.flatMap((file) => file.shareId ? [file.shareId] : []))].sort().join(",");
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +74,13 @@ export default function App() {
     }
     return () => { cancelled = true; };
   }, [shareIds]);
-  const allItems = files.filter((file) => !q || `${file.displayName} ${file.notes} ${file.share?.token || ""}`.toLowerCase().includes(q.toLowerCase()));
+  const query = q?.toLowerCase();
+  const allItems = [
+    ...files.filter((file) => !query || `${file.displayName} ${file.notes} ${file.share?.token || ""}`.toLowerCase().includes(query))
+      .map((file) => ({ kind: "file" as const, record: file })),
+    ...texts.filter((text) => !query || `${text.title} ${text.token}`.toLowerCase().includes(query))
+      .map((text) => ({ kind: "text" as const, record: text })),
+  ].sort((a, b) => b.record.createdAt.localeCompare(a.record.createdAt));
   const navigation = useNavigation();
   const submit = useSubmit();
   const searching =
@@ -129,7 +137,23 @@ export default function App() {
           <nav>
             {allItems && allItems.length > 0 ? (
               <ul>
-                {allItems.map((file) => {
+                {allItems.map((item) => {
+                  if (item.kind === "text") {
+                    const text = item.record;
+                    return (
+                      <li key={`text:${text.id}`}>
+                        {" "}
+                        <NavLink
+                          className={({ isActive, isPending }) => isActive ? "active" : isPending ? "pending" : ""}
+                          to={`/texts/${text.id}`}
+                        >
+                          {text.title} #{text.token}{" "}
+                          <i className="fas fa-file-code" title="Saved text" />
+                        </NavLink>
+                      </li>
+                    );
+                  }
+                  const file = item.record;
                   const lastDate = file.share?.lastAccessedAt;
                   const daysSinceAccess = lastDate ? Math.floor((Date.now() - new Date(lastDate).getTime()) / 86400000) : 0;
                   const isExpiring = daysSinceAccess > 25 && daysSinceAccess < 30;

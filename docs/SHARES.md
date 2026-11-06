@@ -36,9 +36,20 @@ atomically allocated alias of that same Share, not a second file identity.
 
 Text uses a single TextShare: random stable ID, content, token and
 `lastAccessedAt`. Anyone with its link can read or edit. Equal content does not
-merge documents. There are no user collections, personal titles, notes or
-favorites. The editor label is derived from content; its language selection is
-a temporary view preference. Close leaves the document available to others.
+merge documents. Newly created empty texts additionally have `draft: true` until
+the first successful Save, which removes that flag atomically. Explicit Cancel
+deletes an unsaved draft and its matching token alias. Cancel cannot delete an
+already saved text, including one saved by another tab in the meantime. Existing
+texts without the flag are treated as saved. Close leaves a saved document
+available to others.
+
+A successful Save records a text summary in this browser's local storage
+(`w2w.texts.v1`) and displays it in the sidebar. Repeated saves update the same
+entry; cancelled drafts and failed saves do not add history. Summaries contain
+only the ID, token, title derived from content and timestamps, never the text
+body. They do not create server-side user collections or ownership. The editor
+label is derived from content; its language selection is a temporary view
+preference.
 
 Both kinds expire after 30 days without effective access. Publishing, explicit
 receiving/viewing and saving text renew the Share and token together. Sidebar

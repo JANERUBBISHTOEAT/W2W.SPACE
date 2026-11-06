@@ -21,7 +21,7 @@ export type FileShare = SharedRecord & {
   size: number;
   type: string;
 };
-export type TextShare = SharedRecord & { content: string };
+export type TextShare = SharedRecord & { content: string; draft?: true };
 export type FileMetadata = { magnet: string; filename?: string; size?: number; type?: string };
 
 export class ShareValidationError extends Error {}
@@ -116,8 +116,27 @@ local existing = redis.call('GET', KEYS[1])
 if not existing then return false end
 local record = cjson.decode(existing)
 if ARGV[7] ~= '' and record.token ~= ARGV[7] then return false end
-if ARGV[5] == 'edit' then record.content = ARGV[6] end
+if ARGV[5] == 'edit' then
+  record.content = ARGV[6]
+  record.draft = nil
+end
 return renew(KEYS[1], record)
+`;
+const cancelTextDraftLua = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local record = cjson.decode(raw)
+if record.draft ~= true or record.id ~= ARGV[2] then return 0 end
+local tokenKey = ARGV[1] .. 'token:' .. record.token
+local alias = redis.call('GET', tokenKey)
+if alias then
+  local mapping = cjson.decode(alias)
+  if mapping.kind == 'text' and mapping.id == record.id then
+    redis.call('DEL', tokenKey)
+  end
+end
+redis.call('DEL', KEYS[1])
+return 1
 `;
 function argumentsFor(kind: ShareKind) {
   return [String(SHARE_TTL_SECONDS * 1000), new Date().toISOString(), PREFIX, kind];
@@ -206,15 +225,20 @@ export async function publishShare(metadata: FileMetadata): Promise<FileShare> {
 /** Metadata inspection (sidebar refresh, preload) must never extend a share. */
 export function getShare(id: string) { return read<FileShare>("file", id, false); }
 export function accessShare(id: string) { return read<FileShare>("file", id, true); }
-export function createTextShare(content = "# Welcome to Text Editor\n\nStart typing...") {
+export function createTextShare(content = "# Welcome to Text Editor\n\nStart typing...", options: { draft?: boolean } = {}) {
   checkedString(content, "text content", TEXT_MAX_SIZE);
-  return publish<TextShare>("text", { id: randomUUID(), content });
+  return publish<TextShare>("text", { id: randomUUID(), content, ...(options.draft ? { draft: true as const } : {}) });
 }
 export function getTextShare(id: string) { return read<TextShare>("text", id, false); }
 export function accessTextShare(id: string) { return read<TextShare>("text", id, true); }
 export function editTextShare(id: string, content: string) {
   checkedString(content, "text content", TEXT_MAX_SIZE);
   return read<TextShare>("text", id, true, content);
+}
+/** Cancelling a fresh editor can never delete a text saved by another tab. */
+export async function cancelTextDraft(id: string): Promise<boolean> {
+  if (!/^[a-f\d-]{36}$/i.test(id)) return false;
+  return await redis.eval(cancelTextDraftLua, 1, recordKey("text", id), PREFIX, id) === 1;
 }
 export async function resolveToken(token: string, touch = false): Promise<
   { type: "file"; share: FileShare } | { type: "text"; share: TextShare } | null
