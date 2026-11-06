@@ -193,15 +193,22 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     const second = createClient(app.baseURL);
     const text = await createText(first);
     const created = await readText(second, text.data);
-    assert.deepEqual(Object.keys(created).sort(), ["content", "id", "lastAccessedAt", "token"]);
+    assert.deepEqual(Object.keys(created).sort(), ["content", "draft", "id", "lastAccessedAt", "token"]);
+    assert.equal(created.draft, true);
     let response = await second(text.data, { intent: "save", content: "共享文本 ✓", title: "private title", language: "python", favorite: "true", updateCount: "900" });
     assert.equal(response.status, 200);
-    assert.equal((await decodeData(response)).success, true);
+    const result = await decodeData(response);
+    assert.equal(result.success, true);
+    assert.deepEqual(Object.keys(result.text).sort(), ["id", "lastAccessedAt", "title", "token"]);
+    assert.equal(result.text.id, text.id);
+    assert.equal(result.text.token, created.token);
+    assert.equal(result.text.title, "共享文本 ✓");
     let saved = await readText(first, text.data);
     assert.equal(saved.content, "共享文本 ✓");
     assert.equal(saved.id, created.id);
     assert.equal(saved.token, created.token);
     assert.equal(saved.title, undefined);
+    assert.equal(saved.draft, undefined);
     response = await first(`/token/${created.token}`);
     assert.equal(response.headers.get("location"), text.path);
     response = await first(dataPath(`/token/${created.token}`, "routes/token.$token"));
@@ -226,6 +233,55 @@ test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async
     assert.equal((await second(text.data, { intent: "access" })).status, 404);
     assert.equal(await redis.exists(key), 0);
     assert.deepEqual(await redis.keys("user:*"), []);
+  });
+
+  await t.test("cancelling a new text releases its record and token at every creation entry point", async () => {
+    const request = createClient(app.baseURL);
+    for (const path of ["/api/new/text", "/new", "/"]) {
+      const creation = await request(path, { type: "text" });
+      assert.equal(creation.status, 302);
+      const textPath = creation.headers.get("location");
+      assert.match(textPath, /^\/texts\/[^/?]+$/);
+      const text = await readText(request, dataPath(textPath, textRoute));
+      assert.equal(text.draft, true);
+      const recordKey = `w2w:v2:share:text:${text.id}`;
+      const tokenKey = `w2w:v2:token:${text.token}`;
+      assert.equal(await redis.exists(recordKey, tokenKey), 2);
+      const response = await request(textPath, { intent: "cancel" });
+      assert.equal(response.status, 302);
+      assert.equal(response.headers.get("location"), "/");
+      assert.equal(await redis.exists(recordKey, tokenKey), 0);
+      const lookup = await request("/api/new/token", { intent: "acquireMagnet", token: text.token });
+      assert.equal((await lookup.json()).type, null);
+      assert.equal((await request(textPath, { intent: "cancel" })).status, 302, "cancel is idempotent");
+      assert.equal((await request(dataPath(textPath, textRoute), { intent: "save", content: "late save" })).status, 404);
+      assert.equal(await redis.exists(recordKey, tokenKey), 0);
+    }
+  });
+
+  await t.test("failed saves remain cancellable and stale cancellation cannot delete a saved text", async () => {
+    const creator = createClient(app.baseURL);
+    const reader = createClient(app.baseURL);
+    const text = await createText(creator);
+    const draft = await readText(creator, text.data);
+    const invalidSave = await creator(text.data, { intent: "save" });
+    assert.equal(invalidSave.status, 400);
+    assert.equal((await decodeData(invalidSave)).success, false);
+    assert.equal((await readText(creator, text.data)).draft, true);
+    // Saving even the unchanged initial content commits the Share. A creator
+    // with an older view must not be able to cancel another reader's save.
+    const saved = await reader(text.data, { intent: "save", content: draft.content });
+    assert.equal(saved.status, 200);
+    assert.equal((await decodeData(saved)).success, true);
+    assert.equal((await readText(creator, text.data)).draft, undefined);
+    const cancellation = await creator(text.path, { intent: "cancel" });
+    assert.equal(cancellation.status, 302);
+    assert.equal(cancellation.headers.get("location"), "/");
+    const preserved = await readText(reader, text.data);
+    assert.equal(preserved.content, draft.content);
+    assert.equal(preserved.token, draft.token);
+    assert.equal((await reader(`/token/${draft.token}`)).headers.get("location"), text.path);
+    assert.equal(await redis.exists(`w2w:v2:share:text:${text.id}`, `w2w:v2:token:${draft.token}`), 2);
   });
 
   await t.test("malformed identities and unsafe metadata are rejected", async () => {

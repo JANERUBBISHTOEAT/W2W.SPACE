@@ -19,7 +19,7 @@ export async function storageCases(t) {
       const assert = require('node:assert/strict');
       const Redis = require('ioredis');
       const redis = new Redis({ host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT) });
-      const { publishShare, getShare, accessShare, createTextShare, getTextShare, accessTextShare, editTextShare, resolveToken, normalizeInfoHash, parseMagnet } = utilities;
+      const { publishShare, getShare, accessShare, createTextShare, getTextShare, accessTextShare, editTextShare, cancelTextDraft, resolveToken, normalizeInfoHash, parseMagnet } = utilities;
       const key = (kind, id) => 'w2w:v2:share:' + kind + ':' + id;
       const tokenKey = (token) => 'w2w:v2:token:' + token;
       const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));

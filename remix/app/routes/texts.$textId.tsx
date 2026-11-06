@@ -14,8 +14,9 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import MonacoEditor, { type OnMount } from "@monaco-editor/react";
 import type { editor } from "monaco-editor";
 import { toast } from "sonner";
-import { getTextByTextId, updateTextByTextId, accessText } from "~/utils/text.server";
+import { getTextByTextId, updateTextByTextId, accessText, cancelTextDraft } from "~/utils/text.server";
 import { ShareValidationError } from "~/utils/share.server";
+import { rememberText, type TextSummary } from "~/utils/texts.local";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: "/css/app.css" },
@@ -28,7 +29,7 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   return data({ text }, { headers: { "Cache-Control": "no-store" } });
 };
 
-interface ActionData { success?: boolean; message?: string }
+interface ActionData { success?: boolean; message?: string; text?: TextSummary }
 
 export const action = async ({ params, request }: ActionFunctionArgs) => {
   if (!params.textId) return data({ success: false, message: "Text not found" }, { status: 404 });
@@ -39,17 +40,25 @@ export const action = async ({ params, request }: ActionFunctionArgs) => {
       const text = await accessText(params.textId);
       return Response.json({ success: !!text }, { status: text ? 200 : 404 });
     }
+    if (intent === "cancel") {
+      await cancelTextDraft(params.textId);
+      return redirect("/");
+    }
     if (intent === "save") {
       const content = form.get("content");
       if (typeof content !== "string") throw new ShareValidationError("Text content is required");
       const text = await updateTextByTextId(params.textId, { content });
       return data(text
-        ? { success: true, message: "Saved successfully" }
+        ? { success: true, message: "Saved successfully", text: {
+          id: text.id, token: text.token, lastAccessedAt: text.lastAccessedAt,
+          title: text.content.split("\n").find((line) => line.trim())?.replace(/^#+\s*/, "").slice(0, 80) || "Untitled Text",
+        } }
         : { success: false, message: "This text share has expired" }, { status: text ? 200 : 404 });
     }
     return data({ success: false, message: "Unknown intent" }, { status: 400 });
   } catch (error) {
     if (error instanceof ShareValidationError) return data({ success: false, message: error.message }, { status: 400 });
+    if (intent === "cancel") return data({ success: false, message: "Could not cancel this text. Please try again." }, { status: 503 });
     throw error;
   }
 };
@@ -93,16 +102,19 @@ export default function TextEditor() {
     return () => controller.abort();
   }, [text.id]);
   const [isSaving, setIsSaving] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const actionData = useActionData<ActionData>();
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const busy = isSaving || isCancelling || navigation.state !== "idle";
 
   const handleSave = useCallback(() => {
+    if (busy) return;
     setIsSaving(true);
     const formData = new FormData();
     formData.append("intent", "save");
-    formData.append("content", content);
-    submit(formData, { method: "post", fetcherKey: "save-text" });
-  }, [content, submit]);
+    formData.append("content", editorRef.current?.getValue() ?? content);
+    submit(formData, { method: "post", action: `/texts/${text.id}` });
+  }, [busy, content, submit, text.id]);
 
   const shownActionDataRef = useRef<typeof actionData>(undefined);
   useEffect(() => {
@@ -110,9 +122,14 @@ export default function TextEditor() {
     if (shownActionDataRef.current === actionData) return;
     shownActionDataRef.current = actionData;
     setIsSaving(false);
+    setIsCancelling(false);
     if (actionData.success) {
+      if (actionData.text) {
+        try { rememberText(actionData.text); }
+        catch { /* The history store displays a storage error; the server save succeeded. */ }
+      }
       const msg = actionData.message || "Saved successfully";
-      const token = text?.token;
+      const token = actionData.text?.token;
       toast.success(msg, {
         ...(token
           ? {
@@ -131,7 +148,7 @@ export default function TextEditor() {
     } else if (actionData.message) {
       toast.error(actionData.message);
     }
-  }, [actionData, text?.token]);
+  }, [actionData]);
 
   const handleEditorDidMount: OnMount = (editor) => {
     editorRef.current = editor;
@@ -160,16 +177,7 @@ export default function TextEditor() {
         if (!isTitleInput && !isTokenInput) {
           e.preventDefault();
           e.stopPropagation();
-          console.log("Ctrl+S pressed, saving from editor");
-
-          // Get latest content directly from Monaco editor instance
-          const currentContent = editorRef.current?.getValue() ?? content;
-
-          setIsSaving(true);
-          const formData = new FormData();
-          formData.append("intent", "save");
-          formData.append("content", currentContent); // Use content from editor
-                            submit(formData, { method: "post", fetcherKey: "save-text" });
+          handleSave();
           return false;
         }
       }
@@ -179,7 +187,14 @@ export default function TextEditor() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [content, submit]);
+  }, [handleSave]);
+
+  const handleClose = () => {
+    if (busy) return;
+    if (!text.draft) { navigate("/"); return; }
+    setIsCancelling(true);
+    submit({ intent: "cancel" }, { method: "post", action: `/texts/${text.id}` });
+  };
 
   const copyToken = async () => {
     if (text?.token) {
@@ -248,15 +263,15 @@ export default function TextEditor() {
           </select>
           <button
             onClick={handleSave}
-            disabled={isSaving || navigation.state === "submitting"}
+            disabled={busy}
           >
-            {isSaving || navigation.state === "submitting"
+            {isSaving
               ? "Saving..."
               : "Save"}
           </button>
-          <button onClick={() => navigate("/")} style={{ position: "relative", color: "#f44250", cursor: "pointer", opacity: 1 }}>
+          <button onClick={handleClose} disabled={busy} style={{ position: "relative", color: "#f44250", cursor: busy ? "wait" : "pointer", opacity: 1 }}>
             <span aria-hidden style={{ visibility: "hidden" }}>Delete</span>
-            <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>Close</span>
+            <span style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>{text.draft ? "Cancel" : "Close"}</span>
           </button>
         </div>
       </div>
