@@ -165,6 +165,24 @@ async function normalizeRandomToken(page, token) {
   }, token);
 }
 
+async function settleEditor(page) {
+  // The editor element appears before its canvas overview ruler has painted.
+  // Flush the public layout/render API, rather than ignoring canvas pixels.
+  await page.waitForFunction(() => globalThis.monaco?.editor?.getEditors().length === 1);
+  return page.evaluate(async () => {
+    const monaco = globalThis.monaco;
+    const editor = monaco.editor.getEditors()[0];
+    editor.layout();
+    editor.render(true);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      language: editor.getModel().getLanguageId(),
+      overviewRulerBorder: editor.getOption(monaco.editor.EditorOption.overviewRulerBorder),
+      overviewRulerLanes: editor.getOption(monaco.editor.EditorOption.overviewRulerLanes),
+    };
+  });
+}
+
 const scenarios = ["home", "new", "draft", "file", "edit", "text"];
 for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: "mobile", width: 390, height: 844 }]) {
   for (const scenario of scenarios) {
@@ -174,8 +192,10 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
       try {
         // Unmasked artifacts always show the actual product, including every
         // intentional semantic/UI difference. Assertions below are narrower.
+        if (scenario === "text") expect(await settleEditor(after.page)).toEqual(await settleEditor(before.page));
         for (const [label, view] of [["before", before], ["after", after]]) {
           const path = testInfo.outputPath(`${label}.png`);
+          if (scenario === "text") await settleEditor(view.page);
           await view.page.screenshot({ path, fullPage: true, animations: "disabled" });
           await testInfo.attach(label, { path, contentType: "image/png" });
         }
@@ -215,6 +235,18 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
           for (const selector of ["#text-editor-header", "#text-editor-header-right button:last-child", "#text-editor-wrapper", "#text-editor-footer"]) {
             expect(await after.page.locator(selector).boundingBox()).toEqual(await before.page.locator(selector).boundingBox());
           }
+          const oldControl = before.page.locator('#text-editor-header-right button:last-child');
+          const newControl = after.page.locator('#text-editor-header-right button:last-child');
+          await expect(oldControl).toBeDisabled();
+          await expect(newControl).toBeEnabled();
+          const oldOpacity = await oldControl.evaluate(button => getComputedStyle(button).opacity);
+          // A viewer's disabled Delete becomes an enabled Close. Its opacity
+          // also affects the shadow outside the masked rectangle, so normalize
+          // only this known semantic state after keeping the raw screenshots.
+          await newControl.evaluate((button, opacity) => {
+            button.disabled = true;
+            button.style.opacity = opacity;
+          }, oldOpacity);
         }
         for (let i = 0; i < regions.length; i++) {
           const selector = regions[i];
@@ -222,11 +254,13 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
           const newTarget = selector ? after.page.locator(selector) : after.page;
           if (selector) expect(await newTarget.boundingBox()).toEqual(await oldTarget.boundingBox());
           const screenshotOptions = page => ({ animations: "disabled", ...(selector ? {} : { fullPage: true }), mask: masks.map(mask => page.locator(mask)) });
+          if (scenario === "text") await settleEditor(before.page);
           const expected = await oldTarget.screenshot(screenshotOptions(before.page));
           const name = `${viewport.name}-${scenario}-${i}.png`;
           const expectedPath = testInfo.snapshotPath(name);
           await mkdir(dirname(expectedPath), { recursive: true });
           await writeFile(expectedPath, expected);
+          if (scenario === "text") await settleEditor(after.page);
           const actual = await newTarget.screenshot(screenshotOptions(after.page));
           expect(actual).toMatchSnapshot(name, { maxDiffPixels: 0, threshold: 0 });
         }
