@@ -1,6 +1,5 @@
 import {
   type ActionFunctionArgs,
-  type LinksFunction,
   type LoaderFunctionArgs,
   data,
   redirect,
@@ -17,11 +16,6 @@ import { toast } from "sonner";
 import { getTextByTextId, updateTextByTextId, accessText, cancelTextDraft } from "~/utils/text.server";
 import { ShareValidationError } from "~/utils/share.server";
 import { rememberText, type TextSummary } from "~/utils/texts.local";
-
-export const links: LinksFunction = () => [
-  { rel: "stylesheet", href: "/css/app.css" },
-  { rel: "stylesheet", href: "/css/text-editor.css" },
-];
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
   const text = params.textId ? await getTextByTextId(params.textId) : null;

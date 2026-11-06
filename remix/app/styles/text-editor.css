@@ -7,12 +7,17 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-width: 0;
 }
 
 #text-editor-header {
   padding: 0;
   border-bottom: 1px solid #e3e3e3;
   display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 1rem;
+  min-width: 0;
   justify-content: space-between;
   align-items: center;
   background: #f7f7f7;
@@ -27,9 +32,12 @@
 #text-editor-header-left > p {
   margin: 0;
   padding: 0;
+  min-width: 0;
+  flex: 1;
 }
 
 #text-editor-header-left > p > button {
+  flex: none;
   z-index: 1;
   margin-left: -4rem;
   cursor: pointer;
@@ -40,10 +48,16 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex: 1 1 22rem;
+  min-width: 0;
+  max-width: 100%;
 }
 
 #text-editor-header-right {
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  max-width: 100%;
   gap: 0.5rem;
   align-items: center;
 }
@@ -67,9 +81,11 @@
   flex: 1;
   position: relative;
   min-height: 0;
+  min-width: 0;
 }
 
 #text-editor-footer {
+  flex: none;
   padding: 0.5rem 1rem;
   border-top: 1px solid #e3e3e3;
   background: #f7f7f7;
@@ -93,7 +109,16 @@
 #text-editor-container label input,
 #text-editor-container label textarea {
   flex-grow: 1;
+  min-width: 0;
 }
+
+#text-editor-header-left input { width: 0; }
+#text-editor-header-left input[name="token"] {
+  flex: 0 1 9rem;
+  padding-right: 4rem;
+}
+#text-editor-header-right select { min-width: 0; max-width: 100%; }
+#text-editor-header-right button { white-space: nowrap; }
 /* 
 #text-editor-container p button,
 #text-editor-container label button {
@@ -117,4 +142,33 @@
   /* border: 1px solid #ccc; */
   cursor: not-allowed;
   opacity: 0.7;
+}
+
+body:has(.transfer-status) #text-editor-container {
+  padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (max-width: 1100px) {
+  #text-editor-header { padding: 1rem; }
+  #text-editor-header-left { flex-basis: 100%; }
+  #text-editor-header-right { margin-left: auto; }
+}
+
+@media (max-width: 767px) {
+  #text-editor-header { gap: 0.75rem; padding-top: max(1rem, env(safe-area-inset-top, 0px)); }
+  #text-editor-header-left { gap: 0.5rem; align-items: flex-start; }
+  #text-editor-header-left > i { padding-top: 0.5rem; font-size: 1.5rem; }
+  #text-editor-header-left > p {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+  }
+  #text-editor-header-left input:first-child { grid-column: 1 / -1; width: 100%; }
+  #text-editor-header-left input[name="token"] { width: 100%; margin-left: 0; padding-right: 0.75rem; }
+  #text-editor-header-left > p > button { margin-left: 0; }
+  #text-editor-header-right { width: 100%; gap: 0.5rem; flex-wrap: nowrap; }
+  #text-editor-header-right > select { flex: 1; width: 0; }
+  #text-editor-header-right > select,
+  #text-editor-header-right > button { margin-left: 0; }
+  #text-editor-footer { padding: 0.5rem; font-size: 0.75rem; overflow-wrap: anywhere; }
 }

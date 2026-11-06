@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 30
     env:
       W2W_VISUAL_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
-      W2W_VISUAL_MODE: ui
+      W2W_VISUAL_MODE: responsive
     steps:
       - uses: actions/checkout@v4
       - name: Set validation output paths
@@ -51,7 +51,7 @@ jobs:
       - name: Install browser test runtime
         id: browser-runtime
         working-directory: remix
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium webkit
       - name: Validate browser recovery and file transfers
         working-directory: remix
         run: npm run test:browser
