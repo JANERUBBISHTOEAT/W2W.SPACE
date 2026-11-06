@@ -345,6 +345,7 @@ export default function Index() {
           type="text"
           name="token"
           aria-label="Share token"
+          title="Paste a token, or type all 6 digits to start"
           inputMode="numeric"
           autoComplete="off"
           spellCheck={false}
