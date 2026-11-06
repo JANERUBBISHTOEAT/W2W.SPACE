@@ -51,7 +51,8 @@ Perfect for transferring files to public computers:
 
 ## 📸 Screenshots
 
-<details>
+<!-- Jekyll needs markdown="1" to render Markdown inside HTML disclosure blocks. -->
+<details markdown="1">
 <summary>📊 Dashboard</summary>
 
 Users can view all their files in a clean, organized dashboard with quick actions.
@@ -60,7 +61,7 @@ Users can view all their files in a clean, organized dashboard with quick action
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>🔄 Two-Way Sharing</summary>
 
 File or text can be shared with a single click, providing seamless peer-to-peer transfer.
@@ -69,7 +70,7 @@ File or text can be shared with a single click, providing seamless peer-to-peer 
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>📄 File Sharing</summary>
 
 #### New File
@@ -99,7 +100,7 @@ Get files by entering the token code.
 
 </details>
 
-<details>
+<details markdown="1">
 <summary>📝 Text Sharing</summary>
 
 #### New Text

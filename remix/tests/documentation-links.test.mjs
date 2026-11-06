@@ -6,6 +6,14 @@ const readme = await readFile(new URL("../../readme.md", import.meta.url), "utf8
 const home = await readFile(new URL("../app/routes/_index.tsx", import.meta.url), "utf8");
 const repository = "https://github.com/JANERUBBISHTOEAT/W2W.SPACE";
 
+test("README screenshot disclosures enable Jekyll Markdown rendering", () => {
+  const disclosures = [...readme.matchAll(/<details\b([^>]*)>/g)];
+  assert.equal(disclosures.length, 4);
+  for (const disclosure of disclosures) {
+    assert.match(disclosure[1], /\bmarkdown="1"/, "Jekyll must render the screenshot Markdown inside each disclosure");
+  }
+});
+
 test("Why W2W footer uses Pages and a stable, unique README anchor", () => {
   const link = home.match(/href="([^"]+)">\| Why W2W\?<\/a>/);
   assert.ok(link, "The home page must include its Why W2W link");

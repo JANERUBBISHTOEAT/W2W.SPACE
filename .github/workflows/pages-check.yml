@@ -1,0 +1,29 @@
+name: Validate Pages documentation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'readme.md'
+      - 'img/**'
+      - '_config.yml'
+      - '.github/workflows/pages-check.yml'
+      - '.github/scripts/check-pages.py'
+
+permissions:
+  contents: read
+
+jobs:
+  check-pages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Match the Jekyll builder used by the existing Pages deployment.
+      # This job builds and inspects only; it never publishes a Pages artifact.
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+      - name: Verify rendered screenshots and local image files
+        run: python3 .github/scripts/check-pages.py _site
