@@ -12,9 +12,9 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { resolveToken } from "~/utils/share.server";
-import { createLocalFile, rememberShare } from "~/utils/files.local";
+import { createLocalFile, getLocalFile, rememberShare } from "~/utils/files.local";
+import { normalizeInfoHash } from "~/utils/infohash";
 import type { PublicShare } from "~/utils/files.local";
-import { prettyBytes } from "~/utils/functions";
 import { verifyGoogleCredential } from "~/utils/google-auth.server";
 import { consumeGoogleLoginChallenge, isGoogleLoginNonce } from "~/utils/google-login-challenge.server";
 import { isSameSiteRequest } from "~/utils/request-origin.server";
@@ -26,8 +26,8 @@ import {
   getSession,
   getUserSession,
 } from "~/utils/session.server";
-import { loadTorrentClient } from "~/utils/webtorrent.client";
-import type { BrowserTorrentFile } from "~/utils/webtorrent.client";
+import { receiveFile } from "~/utils/webtorrent.client";
+import { useTransfers } from "~/components/TransferStatus";
 
 interface HomeActionData {
   user?: SessionIdentity | null;
@@ -112,74 +112,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return data({ error: "Unknown intent" }, { status: 400 });
 };
 
-async function downloadTorrentFile(file: BrowserTorrentFile) {
-  const blob = await file.blob();
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.textContent = `Download file${file.name}`;
-  link.download = file.name;
-  const container = document.createElement("div");
-  container.appendChild(link);
-  document.getElementById("fileList")?.appendChild(container);
-  link.click();
-}
-
-// A pasted magnet may contain only xt. Wait for torrent metadata before the
-// first publication, because a Share's original filename/size are immutable.
-async function receiveRawMagnet(magnet: string) {
-  const client = await loadTorrentClient();
-  const existing = client.torrents.find((torrent) => torrent.magnetURI === magnet);
-  const torrent = existing ?? client.add(magnet);
-  const toastId = `download-${torrent.infoHash || magnet}`;
-  toast.loading("Downloading 0%", { id: toastId });
-  let published = false;
-  const onReady = () => {
-    if (published) return;
-    published = true;
-    const body = new URLSearchParams({
-      intent: "acquireToken",
-      magnet: torrent.magnetURI,
-      filename: torrent.name,
-      filesize: String(torrent.length),
-      filetype: torrent.files[0]?.type || "",
-    });
-    void fetch("/api/new/token", { method: "POST", body })
-      .then(async (response) => {
-        const result: HomeActionData = await response.json();
-        if (!response.ok || !result.share) throw new Error(result.error || "Could not save the shared file");
-        rememberShare(result.share, "receive");
-      })
-      .catch(() => toast.error("The transfer started, but its file record could not be saved."));
-  };
-  const onDone = () => {
-    toast.dismiss(toastId);
-    toast.success("Download finished! Your file is ready for use 🎉");
-    for (const file of torrent.files) {
-      void downloadTorrentFile(file).catch(() => toast.error("Could not save the downloaded file."));
-    }
-  };
-  if (torrent.ready) onReady();
-  else torrent.on("ready", onReady);
-  if (torrent.done) onDone();
-  else torrent.on("done", onDone);
-  if (!existing) {
-    torrent.on("download", () => toast.loading(`Downloading ${(torrent.progress * 100).toFixed(1)}%`, {
-      id: toastId,
-      description: `${prettyBytes(torrent.downloadSpeed)}/s · ${torrent.numPeers} peers`,
-    }));
-    torrent.on("error", () => {
-      toast.dismiss(toastId);
-      toast.error("The transfer failed. Check that the sender is still online.");
-    });
-  }
-}
-
 export default function Index() {
   const { googleClientId, user: initialUser } = useLoaderData<typeof loader>();
   const location = useLocation();
   const navigate = useNavigate();
   const { submit, data } = useFetcher<HomeActionData>();
+  const [lookupPending, setLookupPending] = useState(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const transfers = useTransfers();
+  const [tokenValue, setTokenValue] = useState("");
+  const [tokenStatus, setTokenStatus] = useState("Paste a token, or type all 6 digits to start.");
+  const [tokenError, setTokenError] = useState(false);
+  const inputValueRef = useRef("");
+  const requestedRef = useRef<{ value: string; type: "token" | "magnet"; controller: AbortController }>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const restoreFetcher = useFetcher<{ success?: boolean; url?: string; error?: string }>();
   const { submit: restore, state: restoreState, data: restoreData } = restoreFetcher;
   const restoreHandledRef = useRef(false);
@@ -189,17 +139,105 @@ export default function Index() {
   const shownMessageKeyRef = useRef<string>();
   const handledTokenRef = useRef<string>();
 
-  const handleDownload = useCallback((value: string, type: "token" | "magnet") => {
+  const handleDownload = useCallback((raw: string, type: "token" | "magnet") => {
+    const value = raw.trim();
     if (!value) return;
-    if (type === "magnet") {
-      void receiveRawMagnet(value).catch(() => toast.error("Could not initialize file sharing. Please try again."));
+    clearTimeout(debounceRef.current);
+    if (type === "token" && !/^\d{6}$/.test(value)) {
+      setTokenError(true);
+      setTokenStatus("Use the six-digit token from the sender.");
       return;
     }
-    submit({ intent: "acquireMagnet", token: value }, { method: "POST", action: "/api/new/token" });
-  }, [submit]);
+    if (requestedRef.current?.value === value && requestedRef.current.type === type) return;
+    requestedRef.current?.controller.abort();
+    const request = { value, type, controller: new AbortController() };
+    requestedRef.current = request;
+    setTokenError(false);
+    setLookupPending(true);
+    setTokenStatus(type === "token" ? "Finding your share…" : "Connecting to peers…");
+    const current = () => requestedRef.current === request &&
+      (type === "magnet" || inputValueRef.current.trim() === value);
+    const status = (message: string, error = false) => {
+      if (!mountedRef.current || !current()) return;
+      setTokenStatus(message);
+      setTokenError(error);
+    };
+    // Accepted receives outlive this view. Editing the token supersedes only a
+    // pending lookup; navigating to another page never cancels a transfer.
+    void (async () => {
+      if (type === "magnet") {
+        const hash = new URLSearchParams(value.slice(value.indexOf("?") + 1)).getAll("xt")
+          .find((part) => /^urn:btih:/i.test(part))?.slice(9);
+        const previousFile = hash ? getLocalFile(normalizeInfoHash(hash)) : undefined;
+        await receiveFile(value, (torrent) => {
+          // Publish only once real torrent metadata is available. An infoHash-
+          // only magnet must not freeze blank metadata into an immutable share.
+          const body = new URLSearchParams({
+            intent: "acquireToken", magnet: torrent.magnetURI,
+            filename: torrent.name, filesize: String(torrent.length),
+            filetype: torrent.files[0]?.type || "",
+          });
+          void fetch("/api/new/token", { method: "POST", body, signal: AbortSignal.timeout(30000) })
+            .then(async (response) => {
+              const result: HomeActionData = await response.json();
+              if (!response.ok || !result.share) throw new Error(result.error || "Could not save this share");
+              // Removing a known personal record while peers are unavailable
+              // must not be undone by delayed torrent metadata.
+              if (!previousFile || getLocalFile(previousFile.id)) rememberShare(result.share, "receive");
+            }).catch(() => toast.error("The transfer continues, but its share could not be saved. Paste the magnet again to retry."));
+        });
+        return;
+      }
+      const response = await fetch("/api/new/token", {
+        method: "POST", body: new URLSearchParams({ intent: "acquireMagnet", token: value }),
+        signal: AbortSignal.any([request.controller.signal, AbortSignal.timeout(30000)]),
+      });
+      const result: HomeActionData = await response.json();
+      if (!current()) return;
+      if (!response.ok || result.error) throw new Error(result.error || "Could not find this share. Try again.");
+      if (result.type === "text" && result.textId) {
+        if (mountedRef.current) navigate(`/texts/${result.textId}`);
+        return;
+      }
+      if (!result.magnet || !result.share) {
+        status("No share found. Check the token and try again.", true);
+        return;
+      }
+      status("Share found. Connecting to peers…");
+      try { rememberShare(result.share, "receive"); } catch { /* Storage failure must not stop an accepted download. */ }
+      await receiveFile(result.magnet);
+    })().catch((error: unknown) => {
+      if (!current()) return;
+      const message = error instanceof Error ? error.message : "Could not start file sharing. Try again.";
+      status(message, true);
+      if (!mountedRef.current) toast.error(message);
+    }).finally(() => {
+      if (requestedRef.current !== request) return;
+      requestedRef.current = undefined;
+      if (mountedRef.current) setLookupPending(false);
+    });
+  }, [navigate]);
+
+  const changeToken = (value: string) => {
+    inputValueRef.current = value;
+    setTokenValue(value);
+    const invalid = Boolean(value.trim()) && !/^\d{1,6}$/.test(value.trim());
+    setTokenError(invalid);
+    setTokenStatus(invalid ? "Use the six-digit token from the sender." : "Paste a token, or type all 6 digits to start.");
+    requestedRef.current?.controller.abort();
+    requestedRef.current = undefined;
+    setLookupPending(false);
+    clearTimeout(debounceRef.current);
+    if (/^\d{6}$/.test(value.trim())) {
+      debounceRef.current = setTimeout(() => handleDownload(value, "token"), 600);
+    }
+  };
+  useEffect(() => () => clearTimeout(debounceRef.current), []);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.closest("textarea, [contenteditable=true]") || (target instanceof HTMLInputElement && target.name !== "token"))) return;
       const items = event.clipboardData?.items;
       if (!items) return;
       for (const item of items) {
@@ -219,8 +257,10 @@ export default function Index() {
             const text = raw.trim();
             const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
             if (!type) return;
-            const input = document.querySelector<HTMLInputElement>(`input[name="${type}"]`);
-            if (input) input.value = text;
+            if (type === "token") {
+              inputValueRef.current = text;
+              setTokenValue(text);
+            }
             handleDownload(text, type);
           });
           return;
@@ -235,8 +275,8 @@ export default function Index() {
     const token = new URLSearchParams(location.search).get("token");
     if (!token || handledTokenRef.current === token) return;
     handledTokenRef.current = token;
-    const input = document.getElementById("tokenInput") as HTMLInputElement | null;
-    if (input) input.value = token;
+    inputValueRef.current = token;
+    setTokenValue(token);
     handleDownload(token, "token");
   }, [location.search, handleDownload]);
 
@@ -287,71 +327,8 @@ export default function Index() {
       setUser(data.user ?? null);
       return;
     }
-    if (data.intent !== "acquireToken" && data.intent !== "acquireMagnet") return;
-    if (data.type === "text" && data.textId) {
-      handledDataRef.current = data;
-      navigate(`/texts/${data.textId}`);
-      return;
-    }
+  }, [data]);
 
-    const tokenInput = document.getElementById("tokenInput") as HTMLInputElement | null;
-    if (!data.magnet || (data.intent === "acquireToken" && !data.token)) {
-      handledDataRef.current = data;
-      if (tokenInput) {
-        tokenInput.className = "";
-        void tokenInput.offsetWidth;
-        tokenInput.classList.add("wrong-input");
-      }
-      toast.error("No shared file was found for this token or link.");
-      return;
-    }
-    const magnet = data.magnet;
-    let cancelled = false;
-    void loadTorrentClient().then((client) => {
-      if (cancelled || handledDataRef.current === data) return;
-      handledDataRef.current = data;
-      if (tokenInput) {
-        tokenInput.className = "";
-        void tokenInput.offsetWidth;
-        tokenInput.classList.add("correct-input");
-      }
-      const existing = client.torrents.find((torrent) => torrent.magnetURI === magnet);
-      const torrent = existing ?? client.add(magnet);
-      const toastId = `download-${data.token || torrent.infoHash || magnet}`;
-      toast.loading("Downloading 0%", { id: toastId });
-      const onReady = () => {
-        if (data.share) rememberShare(data.share, "receive");
-      };
-      const onDone = () => {
-        toast.dismiss(toastId);
-        toast.success("Download finished! Your file is ready for use 🎉");
-        if (tokenInput) {
-          tokenInput.value = "";
-          tokenInput.className = "";
-        }
-        for (const file of torrent.files) {
-          void downloadTorrentFile(file).catch(() => toast.error("Could not save the downloaded file."));
-        }
-      };
-      if (torrent.ready) onReady();
-      else torrent.on("ready", onReady);
-      if (torrent.done) onDone();
-      else torrent.on("done", onDone);
-      if (!existing) {
-        torrent.on("download", () => {
-          toast.loading(`Downloading ${(torrent.progress * 100).toFixed(1)}%`, {
-            id: toastId,
-            description: `${prettyBytes(torrent.downloadSpeed)}/s · ${torrent.numPeers} peers`,
-          });
-        });
-        torrent.on("error", () => {
-          toast.dismiss(toastId);
-          toast.error("The transfer failed. Check that the sender is still online.");
-        });
-      }
-    }).catch(() => toast.error("Could not initialize file sharing. Please try again."));
-    return () => { cancelled = true; };
-  }, [data, navigate, submit]);
 
   const handleLogin = (response: CredentialResponse, nonce: string) => {
     if (!response.credential) {
@@ -369,16 +346,41 @@ export default function Index() {
           type="text"
           name="token"
           aria-label="Share token"
-          title="💡Try pasting onto page without clicking"
-          onKeyDown={(event) => {
-            event.currentTarget.className = "";
-            void event.currentTarget.offsetWidth;
-            if (event.key === "Enter") handleDownload(event.currentTarget.value.trim(), "token");
+          title="Paste a token, or type all 6 digits to start"
+          inputMode="numeric"
+          autoComplete="off"
+          spellCheck={false}
+          value={tokenValue}
+          onChange={(event) => changeToken(event.target.value)}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData("text/plain").trim();
+            const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
+            if (!type) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (type === "token") {
+              inputValueRef.current = text;
+              setTokenValue(text);
+            }
+            handleDownload(text, type);
           }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              handleDownload(event.currentTarget.value, "token");
+            }
+          }}
+          aria-describedby="token-input-hint"
+          aria-invalid={tokenError}
+          aria-busy={lookupPending}
+          className={tokenError ? "wrong-input" : ""}
           id="tokenInput"
         />
+        <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>
       </div>
-      <div id="fileList"></div>
+      <div id="fileList">
+        {transfers.files.map((file) => <div key={file.url}><a href={file.url} download={file.name}>Download file{file.name}</a></div>)}
+      </div>
       <div className="google-login-container">
         {user ? (
           <div>

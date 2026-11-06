@@ -199,7 +199,7 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
           await view.page.screenshot({ path, fullPage: true, animations: "disabled" });
           await testInfo.attach(label, { path, contentType: "image/png" });
         }
-        const regions = scenario === "home" && mode === "ui" ? ["#sidebar", ".footer"] : [null];
+        const regions = scenario === "home" && mode === "ui" ? ["#sidebar", ".google-login-container", ".footer"] : [null];
         const masks = [];
         if (scenario === "home" && mode === "model") {
           // Anonymous File records no longer sync through Google. Normalize
@@ -224,6 +224,16 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
             const icon = anchor.querySelector(".fa-upload");
             anchor.replaceChildren(label, document.createTextNode(" "), icon);
           });
+        }
+        if (scenario === "draft" && mode === "ui") {
+          // Empty draft values cannot be copied until a share is published.
+          // Keep their geometry and all other pixels under comparison.
+          for (const selector of ["#copy-token", "#copy-magnet"]) {
+            await expect(before.page.locator(selector)).toBeEnabled();
+            await expect(after.page.locator(selector)).toBeDisabled();
+            expect(await after.page.locator(selector).boundingBox()).toEqual(await before.page.locator(selector).boundingBox());
+            await before.page.locator(selector).evaluate(button => { button.disabled = true; });
+          }
         }
         if (["file", "edit"].includes(scenario)) {
           await normalizeRandomToken(before.page, baseline.share.token);
