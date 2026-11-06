@@ -5,10 +5,14 @@ hashes normalize to lowercase hex; tracker parameters and magnet query order do
 not create another Share. A Share stores the magnet and original file metadata,
 a token of 1–6 digits, and `lastAccessedAt`. It has no owner, uploader, account ID, or
 reverse reference to personal files. Publishing the same torrent reuses its
-Share and token; it never replaces the original metadata. New tokens choose a
-random length from one to six digits and do not add leading zeroes. Existing
-tokens, including previously issued six-digit codes with leading zeroes, remain
-unchanged and resolve by their exact string value.
+Share and token; it never replaces the original metadata. New tokens start with
+one random one-digit candidate. If it is occupied, allocation tries one random
+two-digit candidate, then three digits, up to six. Each collision increases the
+length immediately, even if other codes of the same length are still free. If
+all six candidates collide, allocation fails without changing existing shares
+or aliases. New tokens do not add leading zeroes; `0` is a valid one-digit code.
+Existing tokens, including previously issued six-digit codes with leading zeroes,
+remain unchanged and resolve by their exact string value.
 
 Pasting a token starts receiving immediately. Typed tokens of one to five digits
 wait for Enter; a complete six-digit token starts after a short pause. This keeps

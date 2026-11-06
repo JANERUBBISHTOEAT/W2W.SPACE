@@ -93,8 +93,7 @@ function argumentsFor(kind: ShareKind) {
   return [String(SHARE_TTL_SECONDS * 1000), new Date().toISOString(), PREFIX, kind];
 }
 async function publish<T extends SharedRecord>(kind: ShareKind, record: Omit<T, "token" | "lastAccessedAt">): Promise<T> {
-  for (let attempt = 0; attempt < 64; attempt++) {
-    const length = randomInt(1, 7);
+  for (let length = 1; length <= 6; length++) {
     const minimum = length === 1 ? 0 : 10 ** (length - 1);
     const token = randomInt(minimum, 10 ** length).toString();
     const raw = await redis.eval(publishLua, 2, recordKey(kind, record.id), `${PREFIX}token:${token}`,

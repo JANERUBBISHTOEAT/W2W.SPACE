@@ -20,29 +20,51 @@ test("anonymous share identity and token storage", { timeout: 60000 }, async (t)
     assert.throws(() => parseMagnet('magnet:?xt=urn:btih:' + hash + '&xt=urn:btih:' + 'f'.repeat(40)), /unambiguous/);
     assert.throws(() => parseMagnet('magnet:?xt=urn:btih:not-a-hash'), /infoHash/);
   `));
-  await t.test("all token lengths resolve exactly and old padded tokens stay stable", () => run(`
+  await t.test("collisions advance one digit while existing tokens stay stable", () => run(`
+    // This Redis instance belongs exclusively to this regression suite.
+    await redis.flushdb();
     const crypto = require('node:crypto');
     const original = crypto.randomInt;
+    const ranges = [[0, 10], [10, 100], [100, 1000], [1000, 10000], [10000, 100000], [100000, 1000000]];
+    const published = [];
     try {
       for (let length = 1; length <= 6; length++) {
-        let candidate = length === 1 ? 0 : 10 ** (length - 1);
-        while (await redis.exists(tokenKey(String(candidate)))) candidate++;
-        assert.equal(String(candidate).length, length);
-        crypto.randomInt = (minimum, maximum) => minimum === 1 && maximum === 7 ? length : candidate;
+        const calls = [];
+        crypto.randomInt = (minimum, maximum) => {
+          assert.deepEqual([minimum, maximum], ranges[calls.length]);
+          calls.push([minimum, maximum]);
+          return minimum;
+        };
         const share = length % 2
-          ? await createTextShare('variable length token')
+          ? await createTextShare('shortest candidate first')
           : await publishShare({magnet:'magnet:?xt=urn:btih:' + (2000 + length).toString(16).padStart(40, '0')});
-        assert.equal(share.token, String(candidate));
+        assert.deepEqual(calls, ranges.slice(0, length), 'try exactly one candidate per length, starting at one digit');
+        assert.equal(share.token, String(ranges[length - 1][0]));
         assert.equal(share.token.length, length);
         assert.equal((await resolveToken(share.token, true)).share.id, share.id);
+        // The sampled candidate collides, but other codes of that length are
+        // still free: the requested rule advances rather than scanning them.
+        assert.equal(await redis.exists(tokenKey('1')), 0);
+        assert.equal(await redis.exists(tokenKey('11')), 0);
+        published.push(share);
       }
     } finally { crypto.randomInt = original; }
+    for (const share of published) assert.equal((await resolveToken(share.token)).share.id, share.id);
     const hash = '4'.repeat(40);
     const padded = {id:hash, token:'000007', magnet:'magnet:?xt=urn:btih:' + hash, filename:'old.txt', size:7, type:'text/plain', lastAccessedAt:new Date().toISOString()};
     await redis.set(key('file', hash), JSON.stringify(padded), 'EX', 60);
     await redis.set(tokenKey(padded.token), JSON.stringify({kind:'file', id:hash}), 'EX', 60);
     assert.equal((await resolveToken('000007', true)).share.id, hash);
-    assert.equal((await publishShare({magnet:padded.magnet, filename:'changed.txt'})).token, '000007');
+    let repeatedCalls = 0;
+    crypto.randomInt = (minimum, maximum) => {
+      assert.deepEqual([minimum, maximum], ranges[0]);
+      repeatedCalls++;
+      return 0; // Occupied by the first text Share above.
+    };
+    try { assert.equal((await publishShare({magnet:padded.magnet, filename:'changed.txt'})).token, '000007'); }
+    finally { crypto.randomInt = original; }
+    assert.equal(repeatedCalls, 1, 'an existing Share reuses its token despite the candidate collision');
+    assert.equal((await resolveToken('0')).share.id, published[0].id);
     assert.equal((await getShare(hash)).filename, 'old.txt');
     for (const invalid of ['', '1234567', '-1', '1.2', 'abc', ' 7']) assert.equal(await resolveToken(invalid), null);
   `));
@@ -66,17 +88,24 @@ test("anonymous share identity and token storage", { timeout: 60000 }, async (t)
       assert.equal((await resolveToken(share.token)).share.id, share.id);
     }
   `));
-  await t.test("bounded token exhaustion never replaces an occupied alias", () => run(`
+  await t.test("six colliding candidates fail without overwriting any alias", () => run(`
+    await redis.flushdb();
     const crypto = require('node:crypto');
     const original = crypto.randomInt;
-    const occupied = JSON.stringify({kind:'text', id:'occupied'});
-    await redis.set(tokenKey('42'), occupied);
-    let calls = 0;
-    crypto.randomInt = (minimum, maximum) => { calls++; return minimum === 1 && maximum === 7 ? 2 : 42; };
+    const ranges = [[0, 10], [10, 100], [100, 1000], [1000, 10000], [10000, 100000], [100000, 1000000]];
+    const occupied = ranges.map(([, maximum], index) => ({token:String(maximum - 1), mapping:JSON.stringify({kind:index % 2 ? 'file' : 'text', id:'occupied-' + index})}));
+    for (const entry of occupied) await redis.set(tokenKey(entry.token), entry.mapping);
+    const calls = [];
+    crypto.randomInt = (minimum, maximum) => {
+      assert.deepEqual([minimum, maximum], ranges[calls.length]);
+      calls.push([minimum, maximum]);
+      return maximum - 1;
+    };
     try { await assert.rejects(publishShare({magnet:'magnet:?xt=urn:btih:' + '3'.repeat(40)}), /unique sharing token/); }
     finally { crypto.randomInt = original; }
-    assert.equal(calls, 128, 'allocation must stop after 64 two-draw attempts');
-    assert.equal(await redis.get(tokenKey('42')), occupied);
+    assert.deepEqual(calls, ranges, 'stop after one candidate at each of the six allowed lengths');
+    for (const entry of occupied) assert.equal(await redis.get(tokenKey(entry.token)), entry.mapping);
     assert.equal(await getShare('3'.repeat(40)), null);
+    assert.equal(await redis.dbsize(), 6, 'failure must not leak a record or a new alias');
   `));
 });
