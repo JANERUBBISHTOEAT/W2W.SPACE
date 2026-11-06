@@ -128,166 +128,164 @@ async function dragSidebar(page, x) {
   await page.mouse.up();
 }
 
-for (const browserName of ["chromium", "webkit"]) {
-  test.describe(`${browserName} responsive layout`, () => {
-    test.use({ browserName, viewport: { width: 1440, height: 1000 } });
-    test.beforeEach(async ({ context, application }) => {
-      test.setTimeout(90000);
-      await localAssets(context, application);
-    });
+test.describe("responsive layout", () => {
+  test.use({ viewport: { width: 1440, height: 1000 } });
+  test.beforeEach(async ({ context, application }) => {
+    test.setTimeout(90000);
+    await localAssets(context, application);
+  });
 
-    test("desktop sidebar resizes, collapses to typed icons and keeps its width in the text editor", async ({ page, context, application }, testInfo) => {
+  test("desktop sidebar resizes, collapses to typed icons and keeps its width in the text editor", async ({ page, context, application, browserName }, testInfo) => {
+    const fixture = await fixtures(context, application);
+    await page.goto(application.baseURL + fixture.filePath);
+    const sidebar = page.locator("#sidebar");
+    await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+    await expect.poll(() => sidebarWidth(page)).toBeCloseTo(288, 0);
+    await dragSidebar(page, 400);
+    await expect.poll(() => sidebarWidth(page)).toBeGreaterThan(385);
+    const expandedWidth = await sidebarWidth(page);
+    await page.locator(`#sidebar nav a[href="${fixture.textPath}"]`).click();
+    await editorReady(page);
+    expect(await sidebarWidth(page)).toBeCloseTo(expandedWidth, 0);
+    await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
+    await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
+    await noHorizontalOverflow(page);
+    await capture(page, testInfo, `${browserName}-desktop-expanded-text`);
+
+    await dragSidebar(page, 8);
+    await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+    await expect.poll(() => sidebarWidth(page)).toBeCloseTo(64, 0);
+    const fileLink = page.locator(`#sidebar nav a[href="${fixture.filePath}"]`);
+    await expect(fileLink.locator(".sidebar-file-icon.fa-file-pdf")).toBeVisible();
+    await expect(fileLink.locator(".sidebar-entry-label")).toBeHidden();
+    await expect(page.locator(`#sidebar nav a[href="${fixture.textPath}"] .sidebar-file-icon.fa-file-code`)).toBeVisible();
+    await fileLink.hover();
+    await expect(page.getByRole("tooltip")).toContainText(filename);
+    await capture(page, testInfo, `${browserName}-desktop-collapsed-tooltip`);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await page.mouse.move(800, 800);
+    await fileLink.focus();
+    await expect(page.getByRole("tooltip")).toContainText(filename);
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await editorReady(page);
+    await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+    expect(await sidebarWidth(page)).toBeCloseTo(64, 0);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("w2w.sidebar.v1")).collapsed)).toBe(true);
+
+    await dragSidebar(page, 320);
+    await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+    await expect.poll(() => sidebarWidth(page)).toBeGreaterThan(300);
+    const separator = page.getByRole("separator", { name: "Resize sidebar" });
+    await separator.focus();
+    await separator.press("Home");
+    await expect(sidebar).toHaveAttribute("data-collapsed", "true");
+    await separator.press("ArrowRight");
+    await expect(sidebar).toHaveAttribute("data-collapsed", "false");
+    expect(await sidebarWidth(page)).toBeGreaterThanOrEqual(200);
+    const restoredWidth = await sidebarWidth(page);
+    await page.getByRole("link", { name: "Home", exact: true }).click();
+    expect(await sidebarWidth(page)).toBeCloseTo(restoredWidth, 0);
+    await noHorizontalOverflow(page);
+  });
+
+  test.describe("touch viewports", () => {
+    test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
+
+    test("phone, landscape and tablet pages fit without squeezing the sidebar", async ({ page, context, application, browserName }, testInfo) => {
       const fixture = await fixtures(context, application);
-      await page.goto(application.baseURL + fixture.filePath);
-      const sidebar = page.locator("#sidebar");
-      await expect(sidebar).toHaveAttribute("data-collapsed", "false");
-      await expect.poll(() => sidebarWidth(page)).toBeCloseTo(288, 0);
-      await dragSidebar(page, 400);
-      await expect.poll(() => sidebarWidth(page)).toBeGreaterThan(385);
-      const expandedWidth = await sidebarWidth(page);
-      await page.locator(`#sidebar nav a[href="${fixture.textPath}"]`).click();
-      await editorReady(page);
-      expect(await sidebarWidth(page)).toBeCloseTo(expandedWidth, 0);
-      await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
-      await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
-      await noHorizontalOverflow(page);
-      await capture(page, testInfo, `${browserName}-desktop-expanded-text`);
-
-      await dragSidebar(page, 8);
-      await expect(sidebar).toHaveAttribute("data-collapsed", "true");
-      await expect.poll(() => sidebarWidth(page)).toBeCloseTo(64, 0);
-      const fileLink = page.locator(`#sidebar nav a[href="${fixture.filePath}"]`);
-      await expect(fileLink.locator(".sidebar-file-icon.fa-file-pdf")).toBeVisible();
-      await expect(fileLink.locator(".sidebar-entry-label")).toBeHidden();
-      await expect(page.locator(`#sidebar nav a[href="${fixture.textPath}"] .sidebar-file-icon.fa-file-code`)).toBeVisible();
-      await fileLink.hover();
-      await expect(page.getByRole("tooltip")).toContainText(filename);
-      await capture(page, testInfo, `${browserName}-desktop-collapsed-tooltip`);
-      await page.keyboard.press("Escape");
-      await expect(page.getByRole("tooltip")).toHaveCount(0);
-      await page.mouse.move(800, 800);
-      await fileLink.focus();
-      await expect(page.getByRole("tooltip")).toContainText(filename);
-      await page.keyboard.press("Escape");
-      await page.reload();
-      await editorReady(page);
-      await expect(sidebar).toHaveAttribute("data-collapsed", "true");
-      expect(await sidebarWidth(page)).toBeCloseTo(64, 0);
-      expect(await page.evaluate(() => JSON.parse(localStorage.getItem("w2w.sidebar.v1")).collapsed)).toBe(true);
-
-      await dragSidebar(page, 320);
-      await expect(sidebar).toHaveAttribute("data-collapsed", "false");
-      await expect.poll(() => sidebarWidth(page)).toBeGreaterThan(300);
-      const separator = page.getByRole("separator", { name: "Resize sidebar" });
-      await separator.focus();
-      await separator.press("Home");
-      await expect(sidebar).toHaveAttribute("data-collapsed", "true");
-      await separator.press("ArrowRight");
-      await expect(sidebar).toHaveAttribute("data-collapsed", "false");
-      expect(await sidebarWidth(page)).toBeGreaterThanOrEqual(200);
-      const restoredWidth = await sidebarWidth(page);
-      await page.getByRole("link", { name: "Home", exact: true }).click();
-      expect(await sidebarWidth(page)).toBeCloseTo(restoredWidth, 0);
-      await noHorizontalOverflow(page);
+      for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
+        await page.setViewportSize(viewport);
+        await page.goto(application.baseURL + fixture.filePath);
+        const expectedWidth = viewport.width < 768 ? 64 : 288;
+        await expect.poll(() => sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
+        await noHorizontalOverflow(page);
+        await insideViewport(page, page.getByRole("button", { name: "Seed", exact: true }));
+        if (viewport.width < 768) {
+          await page.locator("#sidebar-toggle").click();
+          await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "true");
+          await expect(page.getByRole("searchbox", { name: "Search files" })).toBeVisible();
+          await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeVisible();
+          await page.touchscreen.tap(viewport.width - 10, Math.floor(viewport.height / 2));
+          await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
+          await page.locator("#sidebar-toggle").click();
+          await page.keyboard.press("Escape");
+          await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
+          await page.locator("#sidebar-toggle").click();
+        }
+        await page.locator(`#sidebar nav a[href="${fixture.textPath}"]`).click();
+        await editorReady(page);
+        await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
+        expect(await sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
+        await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
+        await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
+        await insideViewport(page, page.getByRole("combobox", { name: "Select programming language" }));
+        const editorBox = await page.locator("#text-editor-wrapper").boundingBox();
+        expect(editorBox.width).toBeGreaterThan(200);
+        expect(editorBox.height).toBeGreaterThan(100);
+        await noHorizontalOverflow(page);
+        await capture(page, testInfo, `${browserName}-text-${viewport.width}x${viewport.height}`);
+        await page.getByRole("link", { name: "Home", exact: true }).click();
+        await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
+        await noHorizontalOverflow(page);
+        await page.getByRole("button", { name: "New", exact: true }).click();
+        await insideViewport(page, page.getByRole("button", { name: /New File/ }));
+        await noHorizontalOverflow(page);
+        await page.getByRole("button", { name: /New File/ }).click();
+        await expect(page.locator("#dropzone")).toBeVisible();
+        await noHorizontalOverflow(page);
+        for (const control of [
+          page.locator("#dropzone"),
+          page.getByRole("textbox", { name: "Filename", exact: true }),
+          page.getByRole("textbox", { name: "Token", exact: true }),
+          page.getByRole("textbox", { name: "File Link", exact: true }),
+          page.getByRole("textbox", { name: "Notes", exact: true }),
+        ]) await insideContentWidth(page, control);
+      }
     });
 
-    test.describe("touch viewports", () => {
-      test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
-
-      test("phone, landscape and tablet pages fit without squeezing the sidebar", async ({ page, context, application }, testInfo) => {
-        const fixture = await fixtures(context, application);
-        for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
-          await page.setViewportSize(viewport);
-          await page.goto(application.baseURL + fixture.filePath);
-          const expectedWidth = viewport.width < 768 ? 64 : 288;
-          await expect.poll(() => sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
-          await noHorizontalOverflow(page);
-          await insideViewport(page, page.getByRole("button", { name: "Seed", exact: true }));
-          if (viewport.width < 768) {
-            await page.locator("#sidebar-toggle").click();
-            await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "true");
-            await expect(page.getByRole("searchbox", { name: "Search files" })).toBeVisible();
-            await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeVisible();
-            await page.touchscreen.tap(viewport.width - 10, Math.floor(viewport.height / 2));
-            await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-            await page.locator("#sidebar-toggle").click();
-            await page.keyboard.press("Escape");
-            await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-            await page.locator("#sidebar-toggle").click();
-          }
-          await page.locator(`#sidebar nav a[href="${fixture.textPath}"]`).click();
-          await editorReady(page);
-          await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-          expect(await sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
-          await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
-          await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
-          await insideViewport(page, page.getByRole("combobox", { name: "Select programming language" }));
-          const editorBox = await page.locator("#text-editor-wrapper").boundingBox();
-          expect(editorBox.width).toBeGreaterThan(200);
-          expect(editorBox.height).toBeGreaterThan(100);
-          await noHorizontalOverflow(page);
-          await capture(page, testInfo, `${browserName}-text-${viewport.width}x${viewport.height}`);
-          await page.getByRole("link", { name: "Home", exact: true }).click();
-          await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
-          await noHorizontalOverflow(page);
-          await page.getByRole("button", { name: "New", exact: true }).click();
-          await insideViewport(page, page.getByRole("button", { name: /New File/ }));
-          await noHorizontalOverflow(page);
-          await page.getByRole("button", { name: /New File/ }).click();
-          await expect(page.locator("#dropzone")).toBeVisible();
-          await noHorizontalOverflow(page);
-          for (const control of [
-            page.locator("#dropzone"),
-            page.getByRole("textbox", { name: "Filename", exact: true }),
-            page.getByRole("textbox", { name: "Token", exact: true }),
-            page.getByRole("textbox", { name: "File Link", exact: true }),
-            page.getByRole("textbox", { name: "Notes", exact: true }),
-          ]) await insideContentWidth(page, control);
-        }
+    test("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application, browserName }, testInfo) => {
+      let legacyStyleRequests = 0;
+      await context.route(/\/css\/(app|text-editor)\.css(?:\?.*)?$/, route => {
+        legacyStyleRequests++;
+        return route.fulfill({ contentType: "text/css", body: "body { display: flex; } #sidebar { width: 18rem; }" });
       });
-
-      test("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application }, testInfo) => {
-        let legacyStyleRequests = 0;
-        await context.route(/\/css\/(app|text-editor)\.css(?:\?.*)?$/, route => {
-          legacyStyleRequests++;
-          return route.fulfill({ contentType: "text/css", body: "body { display: flex; } #sidebar { width: 18rem; }" });
-        });
-        await page.goto(application.baseURL + "/new");
-        await page.getByRole("button", { name: /New File/ }).click();
-        const published = page.waitForResponse(response => /\/api\/[^/]+\/token/.test(new URL(response.url()).pathname)
-          && response.request().method() === "POST" && response.request().postData()?.includes("acquireToken"));
-        await page.locator("#fileInput").setInputFiles({
-          name: `${browserName}-mobile-seed.txt`, mimeType: "text/plain",
-          buffer: Buffer.from("Actual mobile seeding fixture.\n".repeat(2048)),
-        });
-        expect((await published).status()).toBe(200);
-        await expect(page.locator('.transfer-status-label [role="status"]')).toContainText("Seeding");
-        expect(legacyStyleRequests).toBe(0);
-        const styles = await page.locator('link[rel="stylesheet"]').evaluateAll(links => links.map(link => new URL(link.href).pathname));
-        expect(styles.some(path => /^\/assets\/app-[^/]+\.css$/.test(path))).toBe(true);
-        expect(styles.some(path => /^\/assets\/text-editor-[^/]+\.css$/.test(path))).toBe(true);
-        for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
-          await page.setViewportSize(viewport);
-          const status = page.locator(".transfer-status");
-          expect(await status.evaluate(element => getComputedStyle(element).position)).toBe("fixed");
-          await insideViewport(page, page.locator(".transfer-status-label"));
-          await insideViewport(page, page.locator(".transfer-tape--top"));
-          await insideViewport(page, page.locator(".transfer-tape--bottom"));
-          expect((await page.locator(".transfer-tape--top").boundingBox()).width).toBeGreaterThanOrEqual(viewport.width - 2);
-          expect((await page.locator("#sidebar").boundingBox()).x).toBeCloseTo(0, 0);
-          expect((await page.locator("#detail").boundingBox()).x).toBeCloseTo(await sidebarWidth(page), 0);
-          await noHorizontalOverflow(page);
-          await capture(page, testInfo, `${browserName}-seeding-${viewport.width}x${viewport.height}`);
-        }
-        await page.getByRole("button", { name: "Pause transfer animation", exact: true }).click();
-        await expect(page.locator(".transfer-status")).toContainText("Seeding");
-        expect(await page.locator(".transfer-tape--top").evaluate(element => getComputedStyle(element, "::before").animationPlayState)).toBe("paused");
-        await page.getByRole("link", { name: "Home", exact: true }).click();
-        await expect(page.locator(".transfer-status")).toContainText("Seeding");
-        await page.emulateMedia({ reducedMotion: "reduce" });
-        expect(await page.locator(".transfer-tape--top").evaluate(element => getComputedStyle(element, "::before").animationName)).toBe("none");
-        await expect(page.getByRole("button", { name: "Resume transfer animation", exact: true })).toBeHidden();
+      await page.goto(application.baseURL + "/new");
+      await page.getByRole("button", { name: /New File/ }).click();
+      const published = page.waitForResponse(response => /\/api\/[^/]+\/token/.test(new URL(response.url()).pathname)
+        && response.request().method() === "POST" && response.request().postData()?.includes("acquireToken"));
+      await page.locator("#fileInput").setInputFiles({
+        name: `${browserName}-mobile-seed.txt`, mimeType: "text/plain",
+        buffer: Buffer.from("Actual mobile seeding fixture.\n".repeat(2048)),
       });
+      expect((await published).status()).toBe(200);
+      await expect(page.locator('.transfer-status-label [role="status"]')).toContainText("Seeding");
+      expect(legacyStyleRequests).toBe(0);
+      const styles = await page.locator('link[rel="stylesheet"]').evaluateAll(links => links.map(link => new URL(link.href).pathname));
+      expect(styles.some(path => /^\/assets\/app-[^/]+\.css$/.test(path))).toBe(true);
+      expect(styles.some(path => /^\/assets\/text-editor-[^/]+\.css$/.test(path))).toBe(true);
+      for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
+        await page.setViewportSize(viewport);
+        const status = page.locator(".transfer-status");
+        expect(await status.evaluate(element => getComputedStyle(element).position)).toBe("fixed");
+        await insideViewport(page, page.locator(".transfer-status-label"));
+        await insideViewport(page, page.locator(".transfer-tape--top"));
+        await insideViewport(page, page.locator(".transfer-tape--bottom"));
+        expect((await page.locator(".transfer-tape--top").boundingBox()).width).toBeGreaterThanOrEqual(viewport.width - 2);
+        expect((await page.locator("#sidebar").boundingBox()).x).toBeCloseTo(0, 0);
+        expect((await page.locator("#detail").boundingBox()).x).toBeCloseTo(await sidebarWidth(page), 0);
+        await noHorizontalOverflow(page);
+        await capture(page, testInfo, `${browserName}-seeding-${viewport.width}x${viewport.height}`);
+      }
+      await page.getByRole("button", { name: "Pause transfer animation", exact: true }).click();
+      await expect(page.locator(".transfer-status")).toContainText("Seeding");
+      expect(await page.locator(".transfer-tape--top").evaluate(element => getComputedStyle(element, "::before").animationPlayState)).toBe("paused");
+      await page.getByRole("link", { name: "Home", exact: true }).click();
+      await expect(page.locator(".transfer-status")).toContainText("Seeding");
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      expect(await page.locator(".transfer-tape--top").evaluate(element => getComputedStyle(element, "::before").animationName)).toBe("none");
+      await expect(page.getByRole("button", { name: "Resume transfer animation", exact: true })).toBeHidden();
     });
   });
-}
+});

@@ -257,7 +257,7 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     await usable(input, "token input");
     await expect(page.getByText("Receive using your token:", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Paste a token, or type all 6 digits to start.", { exact: true })).toHaveCount(0);
-    for (const [index, link] of (await page.locator(".footer a").all()).entries()) await usable(link, `footer link ${index}`);
+    for (const [index, link] of (await page.locator(".footer a:visible").all()).entries()) await usable(link, `footer link ${index}`);
   }
   if (scenario === "new") {
     for (const name of ["New File", "New Text"]) {
