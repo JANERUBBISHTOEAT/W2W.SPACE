@@ -363,8 +363,8 @@ export default function Index() {
         <a className="visitor-badge" href="https://visitorbadge.io/status?path=https%3A%2F%2Fw2w.space%2F">
           <img src="https://api.visitorbadge.io/api/combined?path=https%3A%2F%2Fw2w.space%2F&countColor=%2337d67a&style=plastic&labelStyle=none" alt="Visitor badge" />
         </a>
-        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project?tab=readme-ov-file#why-w2w">| Why W2W?</a>
-        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/CSCC09-24F-Project">| View on GitHub</a>
+        <a className="github-link" href="https://janerubbishtoeat.github.io/W2W.SPACE/#why-w2w">| Why W2W?</a>
+        <a className="github-link" href="https://github.com/JANERUBBISHTOEAT/W2W.SPACE">| View on GitHub</a>
       </div>
     </div>
   );

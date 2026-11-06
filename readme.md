@@ -2,6 +2,8 @@
 
 # 🌐 WebToWeb (W2W)
 
+[![Deploy W2W](https://github.com/JANERUBBISHTOEAT/W2W.SPACE/actions/workflows/deploy.yml/badge.svg?branch=main&event=push)](https://github.com/JANERUBBISHTOEAT/W2W.SPACE/actions/workflows/deploy.yml?query=branch%3Amain+event%3Apush)
+
 > A browser-based P2P file sharing application built with Remix and WebTorrent
 
 ![Dashboard](img/dashboard.png)
@@ -33,7 +35,10 @@ Perfect for transferring files to public computers:
 - **Classroom Presentations**: Quick file sharing during presentations
 - **Temporary File Exchange**: One-time secure file transfers
 
-**Why WebToWeb over alternatives?**
+<!-- Stable target for the application's footer on GitHub Pages and GitHub. -->
+<a id="why-w2w"></a>
+
+### Why WebToWeb over alternatives?
 
 ✅ **No Login Required** - Keep your accounts safe  
 ✅ **No File Storage** - Direct P2P transfer, no third-party servers  
