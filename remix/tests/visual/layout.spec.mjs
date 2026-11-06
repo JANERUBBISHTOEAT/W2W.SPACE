@@ -229,10 +229,9 @@ for (const viewport of [{ name: "desktop", width: 1440, height: 1000 }, { name: 
           // Empty draft values cannot be copied until a share is published.
           // Keep their geometry and all other pixels under comparison.
           for (const selector of ["#copy-token", "#copy-magnet"]) {
-            await expect(before.page.locator(selector)).toBeEnabled();
+            await expect(before.page.locator(selector)).toBeDisabled();
             await expect(after.page.locator(selector)).toBeDisabled();
             expect(await after.page.locator(selector).boundingBox()).toEqual(await before.page.locator(selector).boundingBox());
-            await before.page.locator(selector).evaluate(button => { button.disabled = true; });
           }
         }
         if (["file", "edit"].includes(scenario)) {
