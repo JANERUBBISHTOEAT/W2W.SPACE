@@ -263,7 +263,7 @@ test("editing a token discards an earlier successful lookup", async ({ page, app
     await page.waitForTimeout(700);
     await expect(page.locator(".transfer-status")).toHaveCount(0);
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem("w2w.files.v1") || "[]"))).toEqual([]);
-    await expect(page.locator("#token-input-hint")).toContainText("Paste a token");
+    await expect(page.locator("#token-input-hint")).toHaveCount(0);
   } finally { release(); }
 });
 

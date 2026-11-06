@@ -125,7 +125,7 @@ export default function Index() {
   }, []);
   const transfers = useTransfers();
   const [tokenValue, setTokenValue] = useState("");
-  const [tokenStatus, setTokenStatus] = useState("Paste a token, or type all 6 digits to start.");
+  const [tokenStatus, setTokenStatus] = useState("");
   const [tokenError, setTokenError] = useState(false);
   const inputValueRef = useRef("");
   const requestedRef = useRef<{ value: string; type: "token" | "magnet"; controller: AbortController }>();
@@ -223,7 +223,7 @@ export default function Index() {
     setTokenValue(value);
     const invalid = Boolean(value.trim()) && !/^\d{1,6}$/.test(value.trim());
     setTokenError(invalid);
-    setTokenStatus(invalid ? "Use the six-digit token from the sender." : "Paste a token, or type all 6 digits to start.");
+    setTokenStatus(invalid ? "Use the six-digit token from the sender." : "");
     requestedRef.current?.controller.abort();
     requestedRef.current = undefined;
     setLookupPending(false);
@@ -341,7 +341,6 @@ export default function Index() {
   return (
     <div id="index-page">
       <div>
-        <p>Receive using your token:</p>
         <input
           type="text"
           name="token"
@@ -370,13 +369,13 @@ export default function Index() {
               handleDownload(event.currentTarget.value, "token");
             }
           }}
-          aria-describedby="token-input-hint"
+          aria-describedby={tokenStatus ? "token-input-hint" : undefined}
           aria-invalid={tokenError}
           aria-busy={lookupPending}
           className={tokenError ? "wrong-input" : ""}
           id="tokenInput"
         />
-        <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>
+        {tokenStatus && <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>}
       </div>
       <div id="fileList">
         {transfers.files.map((file) => <div key={file.url}><a href={file.url} download={file.name}>Download file{file.name}</a></div>)}
