@@ -465,13 +465,17 @@ i {
 #index-page {
   display: flex;
   flex-direction: column;
-  margin: 2rem auto;
+  margin: 2rem auto 0;
   text-align: center;
   color: #818181;
   /* Include the vertical margins in the available height, while allowing
      genuinely taller content to keep scrolling. */
-  min-height: calc(100% - 4rem);
+  min-height: calc(100% - 2rem);
   height: auto;
+}
+
+body:not(:has(.transfer-status)) #detail:has(#index-page) {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
 }
 
 #index-page a {
@@ -646,8 +650,8 @@ i {
   }
   #index-page {
     height: auto;
-    min-height: calc(100% - 2rem);
-    margin: 1rem auto;
+    min-height: calc(100% - 1rem);
+    margin: 1rem auto 0;
   }
   #index-page::before {
     content: "";
