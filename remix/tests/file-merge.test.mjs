@@ -1,101 +1,60 @@
-import { execFile } from "node:child_process";
-import { test } from "node:test";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
-import { build } from "esbuild";
-import { startRedis } from "./helpers.mjs";
+import test from "node:test";
+import { storageCases } from "./share-storage-helper.mjs";
 
-const execFileAsync = promisify(execFile);
-const projectDirectory = fileURLToPath(new URL("..", import.meta.url));
-
-test("login migration preserves existing file sharing", { timeout: 60000 }, async (t) => {
-  const redis = await startRedis();
-  t.after(() => redis.stop());
-  // Bundle the TypeScript utility with its relative imports while leaving the
-  // real Redis/package boundaries intact. Every child uses disposable Redis.
-  const { outputFiles } = await build({
-    entryPoints: ["app/utils/data.server.ts"],
-    absWorkingDir: projectDirectory,
-    bundle: true,
-    write: false,
-    platform: "node",
-    format: "cjs",
-    packages: "external",
-  });
-
-  async function runCase(source) {
-    const script = `
-      const utilities = (() => {
-        const module = { exports: {} };
-        ${outputFiles[0].text}
-        return module.exports;
-      })();
-      const assert = require('node:assert/strict');
-      const Redis = require('ioredis');
-      const redis = new Redis({ host: process.env.REDIS_HOST, port: Number(process.env.REDIS_PORT) });
-      const { createEmptyFile, updateFile, mergeFiles, getFiles, getFileByToken, deleteFile } = utilities;
-      (async () => {
-        try {
-          ${source}
-          await redis.quit();
-          process.exit(0);
-        } catch (error) {
-          console.error(error);
-          redis.disconnect();
-          process.exit(1);
-        }
-      })();
-    `;
-    try {
-      await execFileAsync(process.execPath, ["--input-type=commonjs", "-e", script], {
-        cwd: projectDirectory,
-        env: { ...process.env, NODE_ENV: "test", REDIS_HOST: redis.host, REDIS_PORT: String(redis.port) },
-        timeout: 10000,
-        maxBuffer: 1024 * 1024,
-      });
-    } catch (error) {
-      throw new Error(`File migration regression failed:\n${error.stderr || error.message}`);
-    }
-  }
-
-  await t.test("received file keeps its shared token through login and sender deletion", async () => {
-    await runCase(`
-      const magnet = 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567';
-      const sender = await createEmptyFile('merge-sender');
-      await updateFile('merge-sender', sender.id, { filename: 'shared.txt', magnet });
-      const draft = await createEmptyFile('merge-visitor', false);
-      const received = await updateFile('merge-visitor', draft.id, {
-        filename: 'shared.txt', magnet, token: sender.token, notes: 'Keep my notes', size: 42,
-      });
-      // Match the receive route, which releases the recipient's unused token.
-      await redis.hdel('unifiedTokenMap', draft.token);
-      const files = await mergeFiles('merge-account', 'merge-visitor');
-      assert.equal(files.length, 1);
-      assert.equal(files[0].token, sender.token, 'login must preserve the original shared token');
-      assert.equal(files[0].id, received.id);
-      assert.equal(files[0].notes, received.notes);
-      assert.equal(files[0].size, received.size);
-      assert.equal(files[0].lastEditedAt, received.lastEditedAt);
-      assert.equal((await getFiles('merge-visitor')).length, 0);
-      await deleteFile('merge-sender', sender.id);
-      assert.equal((await getFileByToken(sender.token)).id, received.id);
-      await deleteFile('merge-account', received.id);
-      assert.equal(await getFileByToken(sender.token), null);
-    `);
-  });
-
-  await t.test("login still reuses an existing matching account file", async () => {
-    await runCase(`
-      const magnet = 'magnet:?xt=urn:btih:1123456789abcdef0123456789abcdef01234567';
-      const existing = await createEmptyFile('dedup-account');
-      await updateFile('dedup-account', existing.id, { filename: 'duplicate.txt', magnet });
-      const visitor = await createEmptyFile('dedup-visitor');
-      await updateFile('dedup-visitor', visitor.id, { filename: 'duplicate.txt', magnet });
-      const merged = await mergeFiles('dedup-account', 'dedup-visitor');
-      assert.equal(merged.length, 1);
-      assert.equal(merged[0].id, existing.id);
-      assert.equal(merged[0].token, existing.token);
-      assert.equal((await getFiles('dedup-visitor')).length, 0);
-    `);
-  });
+test("shared lifecycle is independent of personal files and login", { timeout: 60000 }, async (t) => {
+  const run = await storageCases(t);
+  await t.test("inspection never renews; explicit access renews record and alias together", () => run(`
+    const share = await publishShare({magnet:'magnet:?xt=urn:btih:' + '4'.repeat(40)});
+    const recordKey = key('file', share.id);
+    await redis.pexpire(recordKey, 1500);
+    await redis.pexpire(tokenKey(share.token), 1500);
+    const before = await redis.pttl(recordKey);
+    await getShare(share.id);
+    await resolveToken(share.token);
+    assert((await redis.pttl(recordKey)) <= before);
+    await accessShare(share.id);
+    const ttl = await redis.pttl(recordKey);
+    assert(ttl > 29 * 86400 * 1000);
+    assert(Math.abs(ttl - await redis.pttl(tokenKey(share.token))) < 20);
+    assert.deepEqual(await redis.keys('user:*'), []);
+  `));
+  await t.test("expired access/edit and stale tokens cannot revive or renew shares", () => run(`
+    const share = await publishShare({magnet:'magnet:?xt=urn:btih:' + '5'.repeat(40)});
+    await redis.pexpire(key('file', share.id), 1);
+    await redis.pexpire(tokenKey(share.token), 1);
+    await wait(15);
+    assert.equal(await accessShare(share.id), null);
+    assert.equal(await resolveToken(share.token, true), null);
+    assert.equal(await redis.exists(key('file', share.id)), 0);
+    const republished = await publishShare({magnet:share.magnet});
+    const stale = republished.token === '999999' ? '999998' : '999999';
+    await redis.set(tokenKey(stale), JSON.stringify({kind:'file', id:republished.id}), 'PX', 1500);
+    await redis.pexpire(key('file', republished.id), 1500);
+    const before = await redis.pttl(key('file', republished.id));
+    assert.equal(await resolveToken(stale, true), null);
+    assert((await redis.pttl(key('file', republished.id))) <= before);
+    const text = await createTextShare('expires');
+    await redis.pexpire(key('text', text.id), 1);
+    await wait(15);
+    assert.equal(await editTextShare(text.id, 'stale save'), null);
+    assert.equal(await redis.exists(key('text', text.id)), 0);
+  `));
+  await t.test("text shares have independent stable IDs and only shared content", () => run(`
+    const first = await createTextShare('same content');
+    const second = await createTextShare('same content');
+    assert.notEqual(first.id, second.id);
+    assert.notEqual(first.token, second.token);
+    const updated = await editTextShare(first.id, '你好 — updated by another reader');
+    assert.equal(updated.id, first.id);
+    assert.equal(updated.token, first.token);
+    assert.equal((await getTextShare(first.id)).content, updated.content);
+    assert.equal((await getTextShare(second.id)).content, 'same content');
+    assert.deepEqual(Object.keys(updated).sort(), ['content','id','lastAccessedAt','token']);
+    await redis.pexpire(key('text', first.id), 1500);
+    const before = await redis.pttl(key('text', first.id));
+    await getTextShare(first.id);
+    assert((await redis.pttl(key('text', first.id))) <= before);
+    await accessTextShare(first.id);
+    assert((await redis.pttl(key('text', first.id))) > 29 * 86400 * 1000);
+  `));
 });

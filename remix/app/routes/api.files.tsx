@@ -1,57 +1,33 @@
-import { type ActionFunctionArgs } from "react-router";
-import { getFile, updateFile } from "~/utils/data.server";
-import { requireSessionIdentity } from "~/utils/session.server";
-import { FIELD_MAX_SIZE } from "~/utils/constants";
+import { type ActionFunctionArgs, type LoaderFunctionArgs } from "react-router";
+import { accessShare, getShare, publishShare, ShareValidationError } from "~/utils/share.server";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const shareId = new URL(request.url).searchParams.get("shareId");
+  const share = shareId ? await getShare(shareId) : null;
+  return Response.json({ share }, { status: share ? 200 : 404, headers: { "Cache-Control": "no-store" } });
+};
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { sub } = await requireSessionIdentity(request);
-  const formData = await request.formData();
-  const fileId = formData.get("fileid");
-  if (typeof fileId !== "string" || !fileId) {
-    return Response.json({ error: "fileid is required" }, { status: 400 });
+  const form = await request.formData();
+  if (form.get("intent") === "access") {
+    const id = form.get("shareId");
+    const share = typeof id === "string" ? await accessShare(id) : null;
+    return Response.json({ share }, { status: share ? 200 : 404 });
   }
-  const readString = (name: string) => {
-    const value = formData.get(name);
-    return typeof value === "string" ? value : undefined;
-  };
-  const filename = readString("filename");
-  const magnet = readString("magnet");
-  const filetype = readString("filetype");
-  const sizeValue = readString("filesize");
-  const size = sizeValue === undefined ? undefined : Number(sizeValue);
-  if ((size !== undefined && (!Number.isSafeInteger(size) || size < 0)) ||
-      [filename, magnet, filetype].some((value) => value !== undefined && Buffer.byteLength(value) > FIELD_MAX_SIZE)) {
-    return Response.json({ error: "Invalid file metadata" }, { status: 400 });
+  if (form.get("intent") !== "publish" && form.get("intent") !== "updateFile") {
+    return Response.json({ error: "Unknown intent" }, { status: 400 });
   }
-
-  // Check if file exists
-  const file = await getFile(sub, fileId);
-  if (!file) {
-    return Response.json({ error: "File not found" }, { status: 404 });
+  try {
+    const magnet = form.get("magnet");
+    if (typeof magnet !== "string") throw new ShareValidationError("A valid magnet link is required");
+    const string = (key: string) => typeof form.get(key) === "string" ? form.get(key) as string : undefined;
+    const size = string("filesize");
+    // Publishing the same hash returns the existing immutable originals.
+    // Client-supplied IDs, tokens and all personal fields are never persisted.
+    const share = await publishShare({ magnet, filename: string("filename"), type: string("filetype"), size: size === undefined ? undefined : Number(size) });
+    return Response.json({ share, file: share, shareId: share.id, fileId: share.id, token: share.token });
+  } catch (error) {
+    if (error instanceof ShareValidationError) return Response.json({ error: error.message }, { status: 400 });
+    throw error;
   }
-
-  // Update file (may merge into existing when duplicate magnet+filename)
-  const updatedFile = await updateFile(
-    sub,
-    fileId,
-    {
-      ...(magnet !== undefined && { magnet }),
-      ...(filename !== undefined && { filename }),
-      ...(size !== undefined && { size }),
-      ...(filetype !== undefined && { type: filetype }),
-    },
-    false, // not force update
-    true, // allow delete when duplicate
-  );
-
-  // Duplicate merged: current file was removed; return redirect URL so client can navigate (fetcher does not follow redirect with full page load, so message would not show)
-  if (updatedFile.id !== fileId) {
-    const message = encodeURIComponent("Existing file found");
-    return Response.json({
-      redirect: true,
-      url: `/files/${updatedFile.id}/edit?message=${message}`,
-    });
-  }
-
-  return Response.json({ file: updatedFile });
 };

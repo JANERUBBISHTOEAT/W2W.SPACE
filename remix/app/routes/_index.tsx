@@ -11,10 +11,10 @@ import {
 } from "react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { getFileByToken, mergeFiles } from "~/utils/data.server";
-import { mergeTexts } from "~/utils/text.server";
+import { resolveToken } from "~/utils/share.server";
+import { createLocalFile, rememberShare } from "~/utils/files.local";
+import type { PublicShare } from "~/utils/files.local";
 import { prettyBytes } from "~/utils/functions";
-import HashMap from "~/utils/hashmap.server";
 import { verifyGoogleCredential } from "~/utils/google-auth.server";
 import { consumeGoogleLoginChallenge, isGoogleLoginNonce } from "~/utils/google-login-challenge.server";
 import { isSameSiteRequest } from "~/utils/request-origin.server";
@@ -25,7 +25,6 @@ import {
   destroySession,
   getSession,
   getUserSession,
-  getVisitorSession,
 } from "~/utils/session.server";
 import { loadTorrentClient } from "~/utils/webtorrent.client";
 import type { BrowserTorrentFile } from "~/utils/webtorrent.client";
@@ -37,6 +36,8 @@ interface HomeActionData {
   type?: "text" | "file" | null;
   textId?: string;
   fileId?: string;
+  shareId?: string;
+  share?: PublicShare;
   token?: string;
   magnet?: string | null;
 }
@@ -83,11 +84,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     const session = await getSession(request);
-    const visitor = await getVisitorSession(request);
-    if (visitor?.sub) {
-      await Promise.all([mergeFiles(identity.sub, visitor.sub), mergeTexts(identity.sub, visitor.sub)]);
-      session.unset("visitor");
-    }
+    session.unset("visitor");
     session.set("user", identity);
     return data({ user: identity }, { headers: { "Set-Cookie": await commitSession(session) } });
   }
@@ -102,16 +99,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (typeof token !== "string" || !token) {
       return data({ error: "Token is required" }, { status: 400 });
     }
-    const result = await HashMap.getBoth(token);
-    if (result.status === "deleted") {
-      return data({ intent, type: null, magnet: null });
+    const result = await resolveToken(token, true);
+    if (result?.type === "text") {
+      return data({ intent, textId: result.share.id, magnet: null, type: "text" });
     }
-    if (result.textId) {
-      return data({ intent, textId: result.textId, magnet: null, type: "text" });
-    }
-    if (result.type === "file") {
-      const file = await getFileByToken(token);
-      if (file?.magnet) return data({ intent, fileId: file.id, magnet: file.magnet, type: "file" });
+    if (result?.type === "file") {
+      return data({ intent, share: result.share, shareId: result.share.id, fileId: result.share.id, token: result.share.token, magnet: result.share.magnet, type: "file" });
     }
     return data({ intent, magnet: null, type: null });
   }
@@ -132,6 +125,56 @@ async function downloadTorrentFile(file: BrowserTorrentFile) {
   link.click();
 }
 
+// A pasted magnet may contain only xt. Wait for torrent metadata before the
+// first publication, because a Share's original filename/size are immutable.
+async function receiveRawMagnet(magnet: string) {
+  const client = await loadTorrentClient();
+  const existing = client.torrents.find((torrent) => torrent.magnetURI === magnet);
+  const torrent = existing ?? client.add(magnet);
+  const toastId = `download-${torrent.infoHash || magnet}`;
+  toast.loading("Downloading 0%", { id: toastId });
+  let published = false;
+  const onReady = () => {
+    if (published) return;
+    published = true;
+    const body = new URLSearchParams({
+      intent: "acquireToken",
+      magnet: torrent.magnetURI,
+      filename: torrent.name,
+      filesize: String(torrent.length),
+      filetype: torrent.files[0]?.type || "",
+    });
+    void fetch("/api/new/token", { method: "POST", body })
+      .then(async (response) => {
+        const result: HomeActionData = await response.json();
+        if (!response.ok || !result.share) throw new Error(result.error || "Could not save the shared file");
+        rememberShare(result.share, "receive");
+      })
+      .catch(() => toast.error("The transfer started, but its file record could not be saved."));
+  };
+  const onDone = () => {
+    toast.dismiss(toastId);
+    toast.success("Download finished! Your file is ready for use 🎉");
+    for (const file of torrent.files) {
+      void downloadTorrentFile(file).catch(() => toast.error("Could not save the downloaded file."));
+    }
+  };
+  if (torrent.ready) onReady();
+  else torrent.on("ready", onReady);
+  if (torrent.done) onDone();
+  else torrent.on("done", onDone);
+  if (!existing) {
+    torrent.on("download", () => toast.loading(`Downloading ${(torrent.progress * 100).toFixed(1)}%`, {
+      id: toastId,
+      description: `${prettyBytes(torrent.downloadSpeed)}/s · ${torrent.numPeers} peers`,
+    }));
+    torrent.on("error", () => {
+      toast.dismiss(toastId);
+      toast.error("The transfer failed. Check that the sender is still online.");
+    });
+  }
+}
+
 export default function Index() {
   const { googleClientId, user: initialUser } = useLoaderData<typeof loader>();
   const location = useLocation();
@@ -148,12 +191,11 @@ export default function Index() {
 
   const handleDownload = useCallback((value: string, type: "token" | "magnet") => {
     if (!value) return;
-    submit(
-      type === "token"
-        ? { intent: "acquireMagnet", token: value }
-        : { intent: "acquireToken", magnet: value },
-      { method: "POST", action: "/api/new/token" },
-    );
+    if (type === "magnet") {
+      void receiveRawMagnet(value).catch(() => toast.error("Could not initialize file sharing. Please try again."));
+      return;
+    }
+    submit({ intent: "acquireMagnet", token: value }, { method: "POST", action: "/api/new/token" });
   }, [submit]);
 
   useEffect(() => {
@@ -167,7 +209,9 @@ export default function Index() {
           const previousUrl = localStorage.getItem("fileURL");
           if (previousUrl) URL.revokeObjectURL(previousUrl);
           localStorage.setItem("fileURL", URL.createObjectURL(file));
-          submit({ fileName: file.name, mimeType: file.type }, { method: "POST", action: "/api/new/file" });
+          const draft = createLocalFile({ displayName: file.name });
+          const query = new URLSearchParams({ pasted: "true", fileName: file.name, mimeType: file.type });
+          navigate(`/files/${draft.id}/edit?${query}`);
           return;
         }
         if (item.kind === "string") {
@@ -185,7 +229,7 @@ export default function Index() {
     };
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
-  }, [handleDownload, submit]);
+  }, [handleDownload, navigate]);
 
   useEffect(() => {
     const token = new URLSearchParams(location.search).get("token");
@@ -276,16 +320,7 @@ export default function Index() {
       const toastId = `download-${data.token || torrent.infoHash || magnet}`;
       toast.loading("Downloading 0%", { id: toastId });
       const onReady = () => {
-        if (data.fileId) {
-          submit({
-            intent: "updateFile",
-            fileid: data.fileId,
-            magnet: torrent.magnetURI,
-            filename: torrent.name,
-            filesize: String(torrent.length),
-            filetype: torrent.files[0]?.type || "",
-          }, { method: "POST", action: "/api/files" });
-        }
+        if (data.share) rememberShare(data.share, "receive");
       };
       const onDone = () => {
         toast.dismiss(toastId);
@@ -353,7 +388,7 @@ export default function Index() {
         ) : googleClientId ? (
           <GoogleOAuthProvider clientId={googleClientId}>
             <div className="login-button">
-              <p>log in to sync file history:</p>
+              <p>log in with your Google account:</p>
               <GoogleLoginWithNonce onSuccess={handleLogin} retryVersion={googleLoginRetry} />
             </div>
           </GoogleOAuthProvider>

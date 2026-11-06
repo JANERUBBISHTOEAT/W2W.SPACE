@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import Redis from "ioredis";
 import { createRequire } from "node:module";
 import test from "node:test";
 import {
@@ -51,9 +52,11 @@ async function readText(request, path) {
   return (await decodeData(response, textRoute)).text;
 }
 
-test("production HTTP workflows and session boundaries", { timeout: 60000 }, async (t) => {
+test("production HTTP workflows and anonymous shares", { timeout: 60000 }, async (t) => {
   const app = await startApplication();
   t.after(app.stop);
+  const redis = new Redis({ host: app.redis.host, port: app.redis.port });
+  t.after(() => redis.quit());
 
   await t.test("health reports the intended revision on the patched router runtime", async () => {
     const response = await createClient(app.baseURL)("/health");
@@ -66,23 +69,6 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert(minor > 18 || (minor === 18 && patch >= 4), "React Router must include the 7.18.4 security fixes");
   });
 
-  await t.test("creation requires a session; home creates a visitor session", async () => {
-    for (const [path, form] of [
-      ["/api/new/text", {}],
-      ["/api/new/file", { fileName: "test.txt", mimeType: "text/plain" }],
-      ["/new", { type: "text" }],
-      ["/new", { type: "file" }],
-      ["/api/new/token", { intent: "acquireToken", magnet: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567" }],
-    ]) {
-      const request = createClient(app.baseURL);
-      assert.equal((await request(path, form)).status, 401, path);
-    }
-    const request = await visitor(app.baseURL);
-    const response = await request("/css/app.css");
-    assert.equal(response.status, 200);
-    assert((await response.text()).length > 100);
-  });
-
   await t.test("home renders the Pages help link and canonical source repository", async () => {
     const response = await createClient(app.baseURL)("/");
     assert.equal(response.status, 200);
@@ -92,235 +78,125 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert.ok(!html.includes("CSCC09-24F-Project"), "The footer must not use the old repository path");
   });
 
-  await t.test("Remix 2 signed visitor cookies retain identity and reject tampering", async () => {
-    const cookie = app.legacySessionCookie({ visitor: { sub: "legacy-remix2-visitor", name: "旧会话" } });
-    const request = createClient(app.baseURL, cookie);
-    const response = await request("/");
-    assert.equal(response.status, 200);
-    assert.equal(response.headers.get("set-cookie"), null, "an existing visitor must not be replaced");
+
+  await t.test("sharing requires no session while optional login retains signed cookies", async () => {
+    const request = createClient(app.baseURL);
     const text = await createText(request);
-    const secondClient = createClient(app.baseURL, cookie);
-    const saved = await readText(secondClient, text.data);
-    assert.equal(saved.owner, true, "the old cookie must retain access to its own collection");
-    assert.equal(saved.id, text.id);
-    const tampered = createClient(app.baseURL, cookie + "tampered");
-    assert.equal((await tampered("/api/new/text", {})).status, 401);
-    const deleted = await secondClient(text.data, { intent: "delete" });
-    assert.equal(deleted.status, 202);
-    const redirect = await decodeStream(deleted);
-    assert.equal(redirect.status, 302);
-    const destination = new URL(redirect.redirect, app.baseURL);
-    assert.equal(destination.pathname, "/");
-    assert.equal(destination.searchParams.get("undoId"), text.id);
-    assert.equal(destination.searchParams.get("undoType"), "text");
+    assert.equal((await readText(request, text.data)).id, text.id);
+    const publish = await request("/api/new/token", { intent: "acquireToken", magnet: "magnet:?xt=urn:btih:" + "1".repeat(40) });
+    assert.equal(publish.status, 200);
+    const share = (await publish.json()).share;
+    assert.equal(share.id, "1".repeat(40));
+    const cookie = app.legacySessionCookie({ visitor: { sub: "legacy-remix2-visitor" } });
+    assert.equal((await createClient(app.baseURL, cookie)("/")).headers.get("set-cookie"), null);
+    assert.match((await createClient(app.baseURL, cookie + "tampered")("/")).headers.get("set-cookie") ?? "", /HttpOnly/);
+    await visitor(app.baseURL);
+    assert.deepEqual(await redis.keys("user:*"), []);
   });
 
-  await t.test("text saves, shares, permits collaboration and preserves empty content", async () => {
-    const owner = await visitor(app.baseURL);
-    const collaborator = await visitor(app.baseURL);
-    const text = await createText(owner);
-    const created = await readText(owner, text.data);
-    assert.equal(created.id, text.id);
-    assert.equal(created.owner, true);
-    assert(created.token);
-    let response = await owner(text.data, {
-      intent: "save", title: "Unicode regression", content: "共享文本 ✓", language: "plaintext", updateCount: "1",
-    });
+  await t.test("draft creation creates no server file or provisional token", async () => {
+    const request = createClient(app.baseURL);
+    const before = (await redis.keys("w2w:v2:*")).sort();
+    assert.equal((await request("/api/new/file", { fileName: "draft.txt", mimeType: "text/plain" })).status, 400);
+    assert.equal((await request("/new", { type: "file" })).status, 302);
+    assert.deepEqual((await redis.keys("w2w:v2:*")).sort(), before);
+  });
+
+  await t.test("anonymous publishers share canonical identity and immutable originals", async () => {
+    const first = createClient(app.baseURL);
+    const second = createClient(app.baseURL);
+    const hash = "a".repeat(40);
+    let response = await first("/api/new/token", { intent: "acquireToken", magnet: `magnet:?xt=urn:btih:${hash}&dn=original.txt`, filename: "original.txt", filesize: "12", filetype: "text/plain" });
+    assert.equal(response.status, 200);
+    const created = await response.json();
+    response = await second("/api/new/token", { intent: "acquireToken", magnet: `magnet:?dn=changed.txt&xt=urn:btih:${hash.toUpperCase()}&tr=wss%3A%2F%2Ftracker.example`, filename: "changed.txt", filesize: "99", notes: "PRIVATE", favorite: "true", owner: "true", token: "000000" });
+    const duplicate = await response.json();
+    assert.equal(duplicate.shareId, hash);
+    assert.equal(duplicate.token, created.token);
+    assert.match(created.token, /^\d{6}$/);
+    assert.equal(duplicate.share.filename, "original.txt");
+    assert.equal(duplicate.share.size, 12);
+    assert.equal(duplicate.share.magnet, created.share.magnet);
+    const stored = JSON.parse(await redis.get(`w2w:v2:share:file:${hash}`));
+    for (const name of ["notes", "favorite", "owner", "displayName", "userId"]) assert.equal(name in stored, false);
+    const received = await (await second("/api/new/token", { intent: "acquireMagnet", token: created.token })).json();
+    assert.equal(received.fileId, hash);
+    assert.equal(received.magnet, created.magnet);
+    response = await second(`/token/${created.token}`);
+    assert.equal(response.headers.get("location"), `/?token=${created.token}`);
+    assert.equal((await second(`/files/${hash}/destroy`, {})).status, 405);
+    assert.equal((await second("/api/restore", { undoId: hash, undoType: "file" })).status, 410);
+    assert.equal((await (await first(`/api/files?shareId=${hash}`)).json()).share.id, hash);
+  });
+
+  await t.test("metadata polling and router preload do not renew, active access does", async () => {
+    const request = createClient(app.baseURL);
+    const created = await (await request("/api/new/token", { intent: "acquireToken", magnet: "magnet:?xt=urn:btih:" + "b".repeat(40) })).json();
+    const key = `w2w:v2:share:file:${created.shareId}`;
+    await redis.pexpire(key, 10000);
+    await redis.pexpire(`w2w:v2:token:${created.token}`, 10000);
+    const before = await redis.pttl(key);
+    await request(`/api/files?shareId=${created.shareId}`);
+    await request(`/files/${created.shareId}`, undefined, { Purpose: "prefetch" });
+    await request(dataPath("/", "root"));
+    assert((await redis.pttl(key)) <= before);
+    assert.equal((await request("/api/files", { intent: "access", shareId: created.shareId })).status, 200);
+    assert((await redis.pttl(key)) > 29 * 86400 * 1000);
+    await redis.del(key, `w2w:v2:token:${created.token}`);
+    assert.equal((await request("/api/files", { intent: "access", shareId: created.shareId })).status, 404);
+    assert.equal((await request(`/api/files?shareId=${created.shareId}`)).status, 404);
+    assert.equal(await redis.exists(key), 0);
+  });
+
+  await t.test("text is one bearer-editable share with stable ID and no personal fields", async () => {
+    const first = createClient(app.baseURL);
+    const second = createClient(app.baseURL);
+    const text = await createText(first);
+    const created = await readText(second, text.data);
+    assert.deepEqual(Object.keys(created).sort(), ["content", "id", "lastAccessedAt", "token"]);
+    let response = await second(text.data, { intent: "save", content: "共享文本 ✓", title: "private title", language: "python", favorite: "true", updateCount: "900" });
     assert.equal(response.status, 200);
     assert.equal((await decodeData(response)).success, true);
-    const saved = await readText(collaborator, text.data);
+    let saved = await readText(first, text.data);
     assert.equal(saved.content, "共享文本 ✓");
-    assert.equal(saved.title, "Unicode regression");
-    assert.equal(saved.owner, false);
-    response = await collaborator(`/token/${created.token}`);
-    assert.equal(response.status, 302);
+    assert.equal(saved.id, created.id);
+    assert.equal(saved.token, created.token);
+    assert.equal(saved.title, undefined);
+    response = await first(`/token/${created.token}`);
     assert.equal(response.headers.get("location"), text.path);
-    response = await collaborator(dataPath(`/token/${created.token}`, "routes/token.$token"));
+    response = await first(dataPath(`/token/${created.token}`, "routes/token.$token"));
     assert.equal(response.status, 202);
-    const sharedRedirect = (await decodeStream(response))[UNSAFE_SingleFetchRedirectSymbol];
-    assert.equal(sharedRedirect.status, 302);
-    assert.equal(sharedRedirect.redirect, text.path);
-
-    response = await collaborator(text.data, {
-      intent: "save", title: "Empty content", content: "", language: "plaintext", updateCount: "2",
-    });
-    assert.equal(response.status, 200);
+    assert.equal((await decodeStream(response))[UNSAFE_SingleFetchRedirectSymbol].redirect, text.path);
+    response = await second(text.data, { intent: "save", content: "" });
     assert.equal((await decodeData(response)).success, true);
-    const empty = await readText(owner, text.data);
-    assert.equal(empty.content, "");
-    assert.equal(empty.updateCount, 2);
-    assert.equal(empty.owner, true);
-    assert.equal((await owner(text.path, { intent: "delete" })).status, 302);
+    saved = await readText(first, text.data);
+    assert.equal(saved.content, "");
+    assert.equal((await first(text.path, { intent: "delete" })).status, 400);
+    const key = `w2w:v2:share:text:${text.id}`;
+    await redis.pexpire(key, 10000);
+    const before = await redis.pttl(key);
+    await readText(first, text.data);
+    assert((await redis.pttl(key)) <= before);
+    assert.equal((await second(text.path, { intent: "access" })).status, 200);
+    assert((await redis.pttl(key)) > 29 * 86400 * 1000);
+    await redis.del(key);
+    assert.equal((await second(text.path, { intent: "save", content: "stale" })).status, 404);
+    assert.equal(await redis.exists(key), 0);
+    assert.deepEqual(await redis.keys("user:*"), []);
   });
 
-  await t.test("viewing cannot revoke ownership; deletion and undo are owner scoped", async () => {
-    const owner = await visitor(app.baseURL);
-    const other = await visitor(app.baseURL);
-    const anonymous = createClient(app.baseURL);
-    const text = await createText(owner);
-    const token = (await readText(owner, text.data)).token;
-    assert.equal((await readText(other, text.data)).owner, false);
-    assert.equal((await readText(anonymous, text.data)).owner, false);
-    assert.equal((await anonymous(text.path, { intent: "delete" })).status, 403);
-    assert.equal((await other(text.path, { intent: "delete" })).status, 403);
-    assert.equal((await readText(owner, text.data)).owner, true);
-    assert.equal((await owner(text.path, { intent: "delete" })).status, 302);
-    let response = await other(`/token/${token}`);
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get("location"), "/deleted");
-    const undo = { undoId: text.id, undoType: "text" };
-    assert.equal((await createClient(app.baseURL)("/api/restore", undo)).status, 401);
-    assert.equal((await other("/api/restore", undo)).status, 404);
-    response = await owner("/api/restore", undo);
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { success: true, type: "text", id: text.id, url: text.path });
-    assert.equal((await readText(owner, text.data)).id, text.id);
-    assert.equal((await owner("/api/restore", undo)).status, 404, "undo is consumed once");
-    response = await owner(`/token/${token}`);
-    assert.equal(response.headers.get("location"), text.path);
-    assert.equal((await owner(text.path, { intent: "delete" })).status, 302);
-  });
-
-  await t.test("file token API returns the magnet and sharing redirect; undo is scoped", async () => {
-    const owner = await visitor(app.baseURL);
-    const other = await visitor(app.baseURL);
-    const magnet = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=integration.txt";
-    let response = await owner("/api/new/token", { intent: "acquireToken", magnet });
-    assert.equal(response.status, 200);
-    const file = await response.json();
-    assert(file.fileId && file.token);
-    response = await other(`/api/${file.fileId}/token`, { intent: "acquireMagnet", token: file.token });
-    assert.equal(response.status, 200);
-    const resolved = await response.json();
-    assert.equal(resolved.type, "file");
-    assert.equal(resolved.magnet, magnet);
-    response = await other(`/token/${file.token}`);
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get("location"), `/?token=${file.token}`);
-    response = await owner(`/files/${file.fileId}`);
-    assert.equal(response.status, 200);
-    assert.match(await response.text(), /New File/);
-    assert.equal((await other(`/files/${file.fileId}/destroy`, {})).status, 404);
-    assert.equal((await owner(`/files/${file.fileId}/destroy`, {})).status, 302);
-    const undo = { undoId: file.fileId, undoType: "file" };
-    assert.equal((await other("/api/restore", undo)).status, 404);
-    response = await owner("/api/restore", undo);
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).id, file.fileId);
-    response = await owner(`/api/${file.fileId}/token`, { intent: "acquireMagnet", token: file.token });
-    assert.equal((await response.json()).magnet, magnet);
-    assert.equal((await owner(`/files/${file.fileId}/destroy`, {})).status, 302);
-  });
-
-  await t.test("a shared file survives source deletion until its final recipient deletes it", async () => {
-    const sender = await visitor(app.baseURL);
-    const recipient = await visitor(app.baseURL);
-    const magnet = "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef0123&dn=shared-recipient.txt";
-    let response = await sender("/api/new/token", { intent: "acquireToken", magnet });
-    assert.equal(response.status, 200);
-    const source = await response.json();
-    assert(source.fileId && source.token);
-    response = await recipient("/api/new/token", { intent: "acquireMagnet", token: source.token });
-    assert.equal(response.status, 200);
-    const copy = await response.json();
-    assert(copy.fileId);
-    assert.notEqual(copy.fileId, source.fileId);
-    assert.equal(copy.magnet, magnet);
-
-    assert.equal((await sender(`/files/${source.fileId}/destroy`, {})).status, 302);
-    response = await recipient(`/api/${copy.fileId}/token`, { intent: "acquireMagnet", token: source.token });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).magnet, magnet);
-    response = await recipient(`/token/${source.token}`);
-    assert.equal(response.headers.get("location"), `/?token=${source.token}`);
-
-    assert.equal((await recipient(`/files/${copy.fileId}/destroy`, {})).status, 302);
-    response = await sender(`/token/${source.token}`);
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get("location"), "/deleted");
-    response = await sender(`/api/${source.fileId}/token`, { intent: "acquireMagnet", token: source.token });
-    assert.equal(response.status, 404);
-  });
-
-  await t.test("file metadata updates stay on the requested file when an empty draft exists", async () => {
-    const owner = await visitor(app.baseURL);
-    const magnet = "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=metadata.txt";
-    let response = await owner("/api/new/token", { intent: "acquireToken", magnet });
-    assert.equal(response.status, 200);
-    const original = await response.json();
-    const fileRoute = "routes/files.$fileId";
-    const editRoute = "routes/files.$fileId_.edit";
-    const originalPath = `/files/${original.fileId}`;
-    response = await owner(dataPath(originalPath, fileRoute));
-    const before = (await decodeData(response, fileRoute)).file;
-
-    response = await owner("/new", { type: "file" });
-    assert.equal(response.status, 302);
-    const draftEditPath = response.headers.get("location");
-    assert.match(draftEditPath, /^\/files\/[^/?]+\/edit$/);
-    const draftPath = draftEditPath.replace(/\/edit$/, "");
-    assert.notEqual(draftPath, originalPath);
-
-    response = await owner(dataPath(`${originalPath}/edit`, editRoute));
-    assert.equal(response.status, 200);
-    const opened = (await decodeData(response, editRoute)).file;
-    assert.equal(opened.id, original.fileId, "opening a populated file must not return the empty draft");
-    assert.equal(opened.magnet, magnet);
-    assert.equal(opened.filename, before.filename);
-    assert.equal(opened.accessCount, before.accessCount + 1);
-
-    response = await owner(dataPath(originalPath, fileRoute), { favorite: "true" });
-    assert.equal(response.status, 200);
-    const favorited = await decodeData(response);
-    assert.equal(favorited.id, original.fileId);
-    assert.equal(favorited.favorite, true);
-    assert.equal(favorited.magnet, magnet);
-    response = await owner(dataPath(originalPath, fileRoute));
-    assert.equal((await decodeData(response, fileRoute)).file.favorite, true, "the favorite update must be persisted on the original");
-    response = await owner(dataPath(draftPath, fileRoute));
-    const draft = (await decodeData(response, fileRoute)).file;
-    assert.equal(draft.magnet, undefined);
-    assert.equal(draft.filename, undefined);
-    assert.equal(draft.favorite, undefined);
-    assert.equal((await owner(`${originalPath}/destroy`, {})).status, 302);
-    assert.equal((await owner(`${draftPath}/destroy`, {})).status, 302);
-  });
-
-  await t.test("file saves deduplicate matching identity and notes while preserving distinct notes", async () => {
-    const owner = await visitor(app.baseURL);
-    const magnet = "magnet:?xt=urn:btih:2222222222222222222222222222222222222222&dn=duplicate.txt";
-    let response = await owner("/api/new/token", { intent: "acquireToken", magnet });
-    assert.equal(response.status, 200);
-    const original = await response.json();
-    const originalPath = `/files/${original.fileId}`;
-    const save = { fileName: "New File", magnet, fileSize: "0", fileType: "text/plain", notes: "" };
-
-    response = await owner("/new", { type: "file" });
-    assert.equal(response.status, 302);
-    const duplicateEditPath = response.headers.get("location");
-    response = await owner(duplicateEditPath, save);
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get("location"), `${originalPath}/edit?message=Existing+file+found`);
-    response = await owner(duplicateEditPath.replace(/\/edit$/, ""));
-    assert.equal(response.status, 302, "saving the exact duplicate must remove the redundant draft");
-    assert.equal(response.headers.get("location"), "/?message=Page+Not+Found");
-
-    response = await owner("/new", { type: "file" });
-    const separateEditPath = response.headers.get("location");
-    const separatePath = separateEditPath.replace(/\/edit$/, "");
-    const separateId = separatePath.split("/").pop();
-    response = await owner(separateEditPath, { ...save, notes: "Keep this annotation" });
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.get("location"), `${separatePath}/?message=File+saved`);
-    response = await owner("/api/files", { fileid: separateId, filename: "New File" });
-    assert.equal(response.status, 200);
-    const updated = (await response.json()).file;
-    assert.equal(updated.id, separateId, "an omitted notes field must retain the current record's distinct notes");
-    assert.equal(updated.notes, "Keep this annotation");
-    assert.equal(updated.magnet, magnet);
-    assert.equal((await owner(originalPath)).status, 200);
-    assert.equal((await owner(`${originalPath}/destroy`, {})).status, 302);
-    assert.equal((await owner(`${separatePath}/destroy`, {})).status, 302);
+  await t.test("malformed identities and unsafe metadata are rejected", async () => {
+    const request = createClient(app.baseURL);
+    for (const magnet of ["https://example.com", "magnet:?xt=urn:btih:no", `magnet:?xt=urn:btih:${"c".repeat(40)}&xt=urn:btih:${"d".repeat(40)}`]) {
+      assert.equal((await request("/api/new/token", { intent: "acquireToken", magnet })).status, 400);
+    }
+    assert.equal((await request("/api/new/token", { intent: "acquireMagnet", token: "123" })).status, 400);
+    const missing = await request("/api/new/token", { intent: "acquireMagnet", token: "000000" });
+    assert.equal(missing.status, 200);
+    assert.equal((await missing.json()).type, null);
+    assert.equal((await request("/api/new/token", { intent: "acquireToken", magnet: "magnet:?xt=urn:btih:" + "e".repeat(40), filesize: "-1" })).status, 400);
+    const text = await createText(request);
+    assert.equal((await request(text.path, { intent: "save" })).status, 400);
   });
 
   await t.test("an unsigned Google credential cannot establish a signed-in session", async () => {
@@ -388,7 +264,7 @@ test("production HTTP workflows and session boundaries", { timeout: 60000 }, asy
     assert.equal(response.headers.get("set-cookie"), null);
     response = await client(loginPath, invalidLogin, { ...forwarded, Origin: "https://attacker.invalid" });
     assert.equal(response.status, 400, "a trusted proxy must not allow a foreign browser origin");
-    assert.equal((await client(text.path, { intent: "delete" })).status, 302);
+    assert.equal((await client(text.path, { intent: "delete" })).status, 400);
 
     const unrelatedProxy = await startApplication({ trustedProxyCIDRs: "192.0.2.1/32" });
     t.after(unrelatedProxy.stop);

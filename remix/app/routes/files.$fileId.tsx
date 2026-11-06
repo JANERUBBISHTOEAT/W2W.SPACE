@@ -1,65 +1,27 @@
 import {
-  type ActionFunctionArgs,
   type LoaderFunctionArgs,
   data,
-  redirect,
   Form,
-  useFetcher,
   useLoaderData,
   useLocation,
+  useNavigate,
 } from "react-router";
 import type { FunctionComponent } from "react";
 import { useEffect, useRef } from "react";
-import invariant from "tiny-invariant";
 import { toast } from "sonner";
 import { fileIconMap } from "~/utils/constants";
-import type { FileRecord } from "~/utils/data.server";
-import { getFile, getFileByFileId, updateFile } from "~/utils/data.server";
-import { getUserSession, getVisitorSession, requireSessionIdentity } from "~/utils/session.server";
+import { putLocalFile, removeLocalFile, useLocalFile } from "~/utils/files.local";
+import type { LocalFile } from "~/utils/files.local";
 import { prettyBytes } from "~/utils/functions";
 
-export const loader = async ({ params, request }: LoaderFunctionArgs) => {
-  invariant(params.fileId, "Missing fileId param");
-  const user = await getUserSession(request);
-  const visitor = await getVisitorSession(request);
-  const userId = user?.sub || visitor?.sub;
-
-  // Try to get file by userId first, if that fails, search globally by fileId
-  let file = null;
-  if (userId) {
-    file = await getFile(userId, params.fileId);
-  }
-
-  const canManage = !!file;
-
-  // If not found by userId, search globally by fileId
-  if (!file) {
-    file = await getFileByFileId(params.fileId);
-  }
-
-  if (!file) {
-    return redirect("/?message=Page+Not+Found");
-  }
-  if (file.token) {
-    const HashMap = (await import("~/utils/hashmap.server")).default;
-    if ((await HashMap.getBoth(file.token)).status === "deleted") return redirect("/deleted");
-  }
-  return data({ file, canManage });
-};
-
-export const action = async ({ params, request }: ActionFunctionArgs) => {
-  invariant(params.fileId, "Missing fileId param");
-  const formData = await request.formData();
-  const { sub } = await requireSessionIdentity(request);
-  if (!await getFile(sub, params.fileId)) throw new Response("Not Found", { status: 404 });
-  return updateFile(sub, params.fileId, {
-    favorite: formData.get("favorite") === "true",
-  });
+export const loader = async ({ params }: LoaderFunctionArgs) => {
+  return data({ fileId: params.fileId || "" });
 };
 
 // [x] Remove contact page, use edit page
 export default function File() {
   const location = useLocation();
+  const navigate = useNavigate();
   const shownMessageKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const search = new URLSearchParams(location.search);
@@ -81,7 +43,10 @@ export default function File() {
     }
   };
 
-  const { file, canManage } = useLoaderData<typeof loader>();
+  const { fileId } = useLoaderData<typeof loader>();
+  const { file: personalFile, loading, error } = useLocalFile(fileId);
+  if (!personalFile) return <p>{loading ? "Loading…" : error || "This file is not in this browser."}</p>;
+  const file = { ...personalFile.share, ...personalFile, filename: personalFile.displayName };
   return (
     <div id="contact">
       <div>
@@ -118,10 +83,12 @@ export default function File() {
               <i>No Name</i>
             )}
           </span>{" "}
-          {canManage ? <Favorite file={file} /> : null}
+          <Favorite file={personalFile} />
         </h1>
 
         <p aria-hidden="true" />
+        {personalFile.status === "expired" ? <p role="status">This share has expired. Your personal notes are kept in this browser.</p> : null}
+        {error ? <p role="alert">{error}</p> : null}
         {file.size ? <p>Size: {prettyBytes(file.size)}</p> : null}
         {file.notes ? (
           <>
@@ -129,7 +96,7 @@ export default function File() {
           </>
         ) : null}
 
-        {canManage ? <div>
+        <div>
           <Form action="edit">
             {/* [x]: Make buttons more descriptive (use seed etc.) */}
             <button type="submit">Seed</button>
@@ -141,15 +108,19 @@ export default function File() {
             method="post"
             onSubmit={(event) => {
               event.preventDefault();
-              toast.warning("Are you sure? This record will be deleted.", {
+              toast.warning("Remove this record from this browser? The share stays available.", {
                 action: {
                   label: "Yes, delete it!",
-                  onClick: () =>
-                    (
-                      document.getElementById(
-                        "destroy-file-form",
-                      ) as HTMLFormElement | null
-                    )?.submit(),
+                  onClick: () => {
+                    removeLocalFile(personalFile.id);
+                    navigate("/");
+                    toast.success("Deleted", {
+                      action: { label: "Undo", onClick: () => {
+                        putLocalFile(personalFile);
+                        navigate(`/files/${personalFile.shareId || personalFile.id}`);
+                      } },
+                    });
+                  },
                 },
                 cancel: { label: "Cancel", onClick: () => {} },
               });
@@ -157,29 +128,19 @@ export default function File() {
           >
             <button type="submit">Delete</button>
           </Form>
-        </div> : null}
+        </div>
       </div>
     </div>
   );
 }
 
-const Favorite: FunctionComponent<{
-  file: Pick<FileRecord, "favorite">;
-}> = ({ file: file }) => {
-  const fetcher = useFetcher();
-  const favorite = fetcher.formData
-    ? fetcher.formData.get("favorite") === "true"
-    : file.favorite;
-
-  return (
-    <fetcher.Form method="post">
-      <button
-        aria-label={favorite ? "Remove from favorites" : "Add to favorites"}
-        name="favorite"
-        value={favorite ? "false" : "true"}
-      >
-        {favorite ? "★" : "☆"}
-      </button>
-    </fetcher.Form>
-  );
-};
+const Favorite: FunctionComponent<{ file: LocalFile }> = ({ file }) => (
+  <form onSubmit={(event) => {
+    event.preventDefault();
+    putLocalFile({ ...file, favorite: !file.favorite });
+  }}>
+    <button aria-label={file.favorite ? "Remove from favorites" : "Add to favorites"} name="favorite" value={file.favorite ? "false" : "true"}>
+      {file.favorite ? "★" : "☆"}
+    </button>
+  </form>
+);

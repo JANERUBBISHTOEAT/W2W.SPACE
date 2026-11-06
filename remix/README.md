@@ -35,3 +35,5 @@ Routes are registered explicitly in `app/routes.ts`; add new route modules there
 The npm scripts target the Linux development/deployment environment. Use WSL or an equivalent POSIX shell on Windows.
 
 See [compatibility and residual dependency advisories](../docs/COMPATIBILITY.md) and [release/rollback procedures](../docs/RELEASE.md). Container builds use the committed lockfile, exclude local secrets, and run as an unprivileged user. Do not use the historical cleanup/deployment commands to stop the entire host or prune rollback images.
+
+The [anonymous Share model](../docs/SHARES.md) documents canonical infoHash IDs, local personal files, explicit access renewal, API examples and the new Redis namespace. Google login is independent of shares and does not sync local file records.

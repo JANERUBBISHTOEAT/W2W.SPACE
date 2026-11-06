@@ -1,8 +1,8 @@
-import HashMap from "~/utils/hashmap.server";
+import { checkShareStorage } from "~/utils/share.server";
 
 export async function loader() {
   try {
-    await HashMap.getKeysCnt();
+    await checkShareStorage();
     return Response.json(
       { status: "ok", version: process.env.APP_REVISION || "development" },
       { headers: { "Cache-Control": "no-store" } },
