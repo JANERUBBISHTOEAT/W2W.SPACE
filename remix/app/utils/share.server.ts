@@ -65,7 +65,10 @@ const renewLua = `
 local function renew(key, record)
   local now = redis.call('TIME')
   local expires = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) + tonumber(ARGV[1])
-  record.lastAccessedAt = ARGV[2]
+  -- Delayed requests must not move an existing Share backwards in LRU order.
+  if not record.lastAccessedAt or record.lastAccessedAt < ARGV[2] then
+    record.lastAccessedAt = ARGV[2]
+  end
   local encoded = cjson.encode(record)
   redis.call('SET', key, encoded)
   redis.call('PEXPIREAT', key, expires)
@@ -81,6 +84,33 @@ if existing then return renew(KEYS[1], cjson.decode(existing)) end
 if redis.call('EXISTS', KEYS[2]) == 1 then return false end
 return renew(KEYS[1], cjson.decode(ARGV[5]))
 `;
+const recycleLua = renewLua + `
+local existing = redis.call('GET', KEYS[1])
+if existing then return renew(KEYS[1], cjson.decode(existing)) end
+local record = cjson.decode(ARGV[5])
+-- A candidate may have expired while the caller was finding the oldest Share.
+for _, token in ipairs(cjson.decode(ARGV[6])) do
+  if redis.call('EXISTS', ARGV[3] .. 'token:' .. token) == 0 then
+    record.token = token
+    return renew(KEYS[1], record)
+  end
+end
+if #KEYS < 3 then return false end
+local raw = redis.call('GET', KEYS[2])
+local alias = redis.call('GET', KEYS[3])
+if not raw or not alias then return false end
+local oldest = cjson.decode(raw)
+local mapping = cjson.decode(alias)
+if oldest.lastAccessedAt ~= ARGV[7]
+  or KEYS[3] ~= ARGV[3] .. 'token:' .. oldest.token
+  or mapping.id ~= oldest.id
+  or KEYS[2] ~= ARGV[3] .. 'share:' .. mapping.kind .. ':' .. mapping.id then
+  return false
+end
+record.token = oldest.token
+redis.call('DEL', KEYS[2], KEYS[3])
+return renew(KEYS[1], record)
+`;
 const accessLua = renewLua + `
 local existing = redis.call('GET', KEYS[1])
 if not existing then return false end
@@ -92,13 +122,65 @@ return renew(KEYS[1], record)
 function argumentsFor(kind: ShareKind) {
   return [String(SHARE_TTL_SECONDS * 1000), new Date().toISOString(), PREFIX, kind];
 }
+type OldestShare = { key: string; token: string; lastAccessedAt: string; time: number };
+async function findOldestShare(): Promise<OldestShare | null> {
+  let cursor = "0";
+  let oldest: OldestShare | null = null;
+  // Only exhaustion needs this scan. Keep it outside Lua so other Redis users
+  // can keep working; the final script checks the selected record atomically.
+  do {
+    const [next, keys] = await redis.scan(cursor, "MATCH", `${PREFIX}share:*`, "COUNT", 256);
+    cursor = next;
+    if (!keys.length) continue;
+    // Text records may be 10 MB; bound each fetch independently of SCAN COUNT.
+    for (let offset = 0; offset < keys.length; offset += 8) {
+      const batch = keys.slice(offset, offset + 8);
+      const records = await redis.mget(...batch);
+      const candidates = records.flatMap((raw, index) => {
+        if (!raw) return [];
+        const record = JSON.parse(raw) as SharedRecord;
+        const key = batch[index];
+        const kind = key.slice(`${PREFIX}share:`.length).split(":")[0];
+        const time = Date.parse(record.lastAccessedAt);
+        if ((kind !== "file" && kind !== "text") || key !== recordKey(kind, record.id)
+          || !/^\d{1,6}$/.test(record.token) || !Number.isFinite(time)) return [];
+        return [{ key, kind, id: record.id, token: record.token, lastAccessedAt: record.lastAccessedAt, time }];
+      });
+      if (!candidates.length) continue;
+      const aliases = await redis.mget(...candidates.map(({ token }) => `${PREFIX}token:${token}`));
+      candidates.forEach((candidate, index) => {
+        if (!aliases[index]) return;
+        const mapping = JSON.parse(aliases[index]!) as { kind: ShareKind; id: string };
+        if (mapping.kind !== candidate.kind || mapping.id !== candidate.id) return;
+        if (!oldest || candidate.time < oldest.time || (candidate.time === oldest.time && candidate.key < oldest.key)) {
+          oldest = candidate;
+        }
+      });
+    }
+  } while (cursor !== "0");
+  return oldest;
+}
 async function publish<T extends SharedRecord>(kind: ShareKind, record: Omit<T, "token" | "lastAccessedAt">): Promise<T> {
+  const candidates: string[] = [];
   for (let length = 1; length <= 6; length++) {
     const minimum = length === 1 ? 0 : 10 ** (length - 1);
     const token = randomInt(minimum, 10 ** length).toString();
+    candidates.push(token);
     const raw = await redis.eval(publishLua, 2, recordKey(kind, record.id), `${PREFIX}token:${token}`,
       ...argumentsFor(kind), JSON.stringify({ ...record, token }));
     if (typeof raw === "string") return JSON.parse(raw) as T;
+  }
+  for (let attempt = 0; attempt < 32; attempt++) {
+    const oldest = await findOldestShare();
+    const keys = [recordKey(kind, record.id)];
+    if (oldest) keys.push(oldest.key, `${PREFIX}token:${oldest.token}`);
+    const raw = await redis.eval(recycleLua, keys.length, ...keys, ...argumentsFor(kind),
+      JSON.stringify(record), JSON.stringify(candidates), oldest?.lastAccessedAt || "");
+    if (typeof raw === "string") return JSON.parse(raw) as T;
+    // Only inconsistent/orphan aliases can occupy every candidate while no
+    // live Share exists. Never delete an unrelated key to repair such data.
+    if (!oldest) throw new Error("Unable to allocate a unique sharing token");
+    // Another request accessed or reclaimed this Share. Select again.
   }
   throw new Error("Unable to allocate a unique sharing token");
 }

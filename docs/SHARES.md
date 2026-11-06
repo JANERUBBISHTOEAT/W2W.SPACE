@@ -9,10 +9,13 @@ Share and token; it never replaces the original metadata. New tokens start with
 one random one-digit candidate. If it is occupied, allocation tries one random
 two-digit candidate, then three digits, up to six. Each collision increases the
 length immediately, even if other codes of the same length are still free. If
-all six candidates collide, allocation fails without changing existing shares
-or aliases. New tokens do not add leading zeroes; `0` is a valid one-digit code.
-Existing tokens, including previously issued six-digit codes with leading zeroes,
-remain unchanged and resolve by their exact string value.
+all six candidates collide, allocation removes the live Share with the earliest
+`lastAccessedAt` across both files and texts and reuses its token. This selection
+is global, not limited to the six colliding candidates. The old Share and its
+alias are replaced atomically; an intervening access causes selection to retry.
+New random candidates do not add leading zeroes; `0` is a valid one-digit code.
+Reused tokens retain their exact spelling, including older codes with leading
+zeroes. Other existing Shares keep their tokens unchanged.
 
 Pasting a token starts receiving immediately. Typed tokens of one to five digits
 wait for Enter; a complete six-digit token starts after a short pause. This keeps
@@ -43,8 +46,15 @@ refreshes, GET metadata, router preload/revalidation and peer heartbeats do not.
 Redis Lua operations make existence checks, updates and expiry atomic; a late
 read or save cannot resurrect an expired Share. Personal Files remain visible
 as expired after the resource disappears. Short tokens can be reused after
-expiry, so prefer the canonical URL for a long-lived reference. A token is a
-convenience code, not authentication or an encryption secret.
+expiry or collision-driven eviction. Eviction also removes the old Share's
+canonical URL; it does not remove browser-local Files or stop an ongoing peer
+transfer. A token is a convenience code, not authentication or an encryption
+secret.
+
+Only the six-collision fallback scans Share records, in batches outside Lua to
+avoid blocking Redis for a full-database scan. The final Lua operation rechecks
+the requested Share, candidate availability, the victim's last access time and
+its alias before replacing anything. No new age field or Redis index is needed.
 
 ## API examples
 
