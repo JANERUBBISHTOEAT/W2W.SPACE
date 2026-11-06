@@ -100,7 +100,7 @@ async function localPeerContext(browser, application, tracker, { paused = false 
 
 async function expectReloadConfirmation(page) {
   // Chromium requires a real user gesture before displaying beforeunload.
-  await page.locator("#sidebar h1").click();
+  await page.locator('.transfer-status-label [role="status"]').click();
   const previousURL = page.url();
   const dialogPromise = page.waitForEvent("dialog", { timeout: 10000 });
   const reload = page.reload({ timeout: 10000 }).catch(() => null);
