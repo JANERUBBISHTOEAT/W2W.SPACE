@@ -27,7 +27,8 @@
 Drag the desktop sidebar's right edge to resize it, or drag it left to collapse
 the list into file-type icons. Hover or focus an icon to read its name. The
 sidebar width is remembered in this browser; the text editor adapts to the
-remaining space. On phones, expand the icon rail to search or browse the list.
+remaining space. On phones, a compact toolbar opens the history drawer or search,
+leaving the full screen width available for files and text editing.
 Transfer bands and the status indicator remain visible while seeding or
 downloading in portrait and landscape layouts.
 

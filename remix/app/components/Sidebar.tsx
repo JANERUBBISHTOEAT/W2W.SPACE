@@ -1,6 +1,6 @@
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { Form, Link, NavLink, useLocation, useSubmit } from "react-router";
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactElement } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement } from "react";
 import { fileIconMap } from "~/utils/constants";
 import type { LocalFile } from "~/utils/files.local";
 import type { LocalText } from "~/utils/texts.local";
@@ -11,6 +11,7 @@ const STORAGE_KEY = "w2w.sidebar.v1";
 const DEFAULT_WIDTH = 288;
 const MIN_WIDTH = 200;
 const RAIL_WIDTH = 64;
+const MOBILE_QUERY = "(max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse)";
 
 function readPreferences(): Preferences {
   try {
@@ -55,12 +56,14 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
   const [mobile, setMobile] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [resizing, setResizing] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const mobileOpenerRef = useRef<HTMLElement | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const focusSearchRef = useRef(false);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number; original: Preferences }>();
   const maximum = Math.max(MIN_WIDTH, Math.min(480, viewportWidth - 320));
-  const collapsed = mobile ? !mobileOpen : preferences.collapsed;
+  const collapsed = mobile ? false : preferences.collapsed;
   const width = collapsed ? RAIL_WIDTH : mobile ? DEFAULT_WIDTH : Math.min(preferences.width, maximum);
 
   const updatePreferences = (next: Preferences, persist = true) => {
@@ -73,9 +76,10 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
   };
 
   useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY);
     const refreshViewport = () => {
       setViewportWidth(window.innerWidth);
-      const narrow = window.matchMedia("(max-width: 767px)").matches;
+      const narrow = media.matches;
       setMobile(narrow);
       if (!narrow) setMobileOpen(false);
     };
@@ -90,9 +94,11 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
       setPreferences(next);
     };
     window.addEventListener("resize", refreshViewport);
+    media.addEventListener("change", refreshViewport);
     window.addEventListener("storage", sync);
     return () => {
       window.removeEventListener("resize", refreshViewport);
+      media.removeEventListener("change", refreshViewport);
       window.removeEventListener("storage", sync);
     };
   }, []);
@@ -100,30 +106,65 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
   useEffect(() => { setMobileOpen(false); }, [location.pathname]);
   useEffect(() => {
     if (!mobileOpen) return;
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") { setMobileOpen(false); toggleRef.current?.focus(); }
+    const opener = mobileOpenerRef.current || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    const background = [document.getElementById("mobile-header"), document.getElementById("detail")]
+      .filter((element): element is HTMLElement => element instanceof HTMLElement)
+      .map((element) => ({ element, inert: element.inert }));
+    background.forEach(({ element }) => { element.inert = true; });
+    if (!focusSearchRef.current) toggleRef.current?.focus({ preventScroll: true });
+    const keys = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileOpen(false);
+      }
+      if (event.key === "Tab") {
+        const controls = Array.from(sidebarRef.current?.querySelectorAll<HTMLElement>(
+          'a[href],button:not([disabled]),input:not([disabled]),[tabindex="0"]',
+        ) || []).filter((element) => element.getClientRects().length > 0);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (!first || !last) { event.preventDefault(); return; }
+        if (event.shiftKey && (document.activeElement === first || !sidebarRef.current?.contains(document.activeElement))) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !sidebarRef.current?.contains(document.activeElement))) {
+          event.preventDefault(); first.focus();
+        }
+      }
     };
-    window.addEventListener("keydown", escape);
-    return () => window.removeEventListener("keydown", escape);
+    window.addEventListener("keydown", keys);
+    return () => {
+      window.removeEventListener("keydown", keys);
+      background.forEach(({ element, inert }) => { element.inert = inert; });
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+      if (mobileOpenerRef.current === opener) mobileOpenerRef.current = null;
+    };
   }, [mobileOpen]);
   useEffect(() => {
     document.body.classList.toggle("sidebar-resizing", resizing);
     return () => document.body.classList.remove("sidebar-resizing");
   }, [resizing]);
   useEffect(() => {
-    if (!collapsed && focusSearchRef.current) {
+    if (!collapsed && (!mobile || mobileOpen) && focusSearchRef.current) {
       focusSearchRef.current = false;
       searchRef.current?.focus();
     }
-  }, [collapsed]);
+  }, [collapsed, mobile, mobileOpen]);
 
   const toggle = () => {
     if (mobile) setMobileOpen(!mobileOpen);
     else updatePreferences({ ...preferencesRef.current, collapsed: !preferencesRef.current.collapsed });
   };
-  const openSearch = () => {
+  const openMenu = (event: MouseEvent<HTMLButtonElement>) => {
+    mobileOpenerRef.current = event.currentTarget;
+    focusSearchRef.current = false;
+    setMobileOpen(true);
+  };
+  const openSearch = (event: MouseEvent<HTMLButtonElement>) => {
     focusSearchRef.current = true;
-    if (mobile) setMobileOpen(true);
+    if (mobile) {
+      mobileOpenerRef.current = event.currentTarget;
+      setMobileOpen(true);
+    }
     else updatePreferences({ ...preferencesRef.current, collapsed: false });
   };
   const closeDrawer = () => setMobileOpen(false);
@@ -165,14 +206,33 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
   };
 
   return <Tooltip.Provider delayDuration={250} skipDelayDuration={100}>
-    <aside id="sidebar" aria-label="File and text history" data-collapsed={collapsed} data-mobile-open={mobileOpen}
+    <header id="mobile-header" aria-label="Mobile navigation">
+      <button id="mobile-sidebar-toggle" className="mobile-toolbar-button" type="button" onClick={openMenu}
+        aria-label="Open sidebar" aria-expanded={mobileOpen} aria-controls="sidebar">
+        <i className="fas fa-bars" aria-hidden="true" />
+      </button>
+      <Link id="mobile-home" to="/" aria-label="Home" onClick={closeDrawer}>
+        <img src="/svg/w2w_flat.svg" width="88" height="28" alt="" />
+      </Link>
+      <button id="mobile-search" className="mobile-toolbar-button" type="button" aria-label="Search files" onClick={openSearch}>
+        <i className="fas fa-search" aria-hidden="true" />
+      </button>
+      <Form className="mobile-new-form" method="get" action="/new" onSubmit={closeDrawer}>
+        <button id="mobile-new" className="mobile-toolbar-button" type="submit" aria-label="New">
+          <i className="fas fa-plus" aria-hidden="true" />
+        </button>
+      </Form>
+    </header>
+    <aside ref={sidebarRef} id="sidebar" role={mobile ? "dialog" : undefined} aria-modal={mobile && mobileOpen || undefined}
+      aria-label="File and text history" data-collapsed={collapsed} data-mobile-open={mobileOpen}
       style={{ "--sidebar-width": `${width}px` } as CSSProperties}>
       <Link to="/" aria-label="Home" onClick={closeDrawer}>
         <h1><span className="sidebar-home-label">Home</span></h1>
       </Link>
       <button ref={toggleRef} id="sidebar-toggle" type="button" onClick={toggle}
-        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!collapsed} aria-controls="sidebar-navigation">
-        <i className={`fas ${collapsed ? "fa-chevron-right" : "fa-chevron-left"}`} aria-hidden="true" />
+        aria-label={mobile ? "Close sidebar" : collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-expanded={mobile ? mobileOpen : !collapsed} aria-controls="sidebar-navigation">
+        <i className={`fas ${mobile ? "fa-times" : collapsed ? "fa-chevron-right" : "fa-chevron-left"}`} aria-hidden="true" />
       </button>
       <div className="sidebar-toolbar">
         <button className="sidebar-search-button" type="button" aria-label="Search files" onClick={openSearch}>
@@ -228,7 +288,6 @@ export default function Sidebar({ items, q, searching }: { items: SidebarItem[];
         onPointerCancel={(event) => finishDrag(event, true)} onLostPointerCapture={(event) => finishDrag(event)}
         onKeyDown={resizeKey} onDoubleClick={() => updatePreferences({ width: Math.min(DEFAULT_WIDTH, maximum), collapsed: false })} />
     </aside>
-    <div className="sidebar-mobile-spacer" data-open={mobileOpen} aria-hidden="true" />
     {mobileOpen && mobile ? <button className="sidebar-backdrop" type="button" aria-label="Close sidebar" onClick={closeDrawer} /> : null}
   </Tooltip.Provider>;
 }

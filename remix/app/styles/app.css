@@ -633,12 +633,12 @@ i {
 .transfer-status--paused .transfer-tape::before { animation-play-state: paused; }
 .token-input-hint { display: block; margin-top: 8px; color: #777; font-size: 12px; }
 .token-input-hint[data-error="true"] { color: #b42318; }
-@media (max-width: 767px) {
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
   .transfer-status-hint { display: none; }
-  .transfer-motion-toggle { min-width: 28px; min-height: 28px; }
+  .transfer-motion-toggle { min-width: 44px; min-height: 44px; }
 
   #detail {
-    padding: max(1.5rem, env(safe-area-inset-top, 0px)) max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) 1rem;
+    padding: 1rem max(1rem, env(safe-area-inset-right, 0px)) max(1rem, env(safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left, 0px));
   }
   #index-page {
     height: auto;
@@ -661,18 +661,61 @@ i {
   #fileList { margin: 10px 0; overflow-wrap: anywhere; }
   .footer { flex-wrap: wrap; justify-content: center; gap: 0.5rem; margin-right: 0; }
 
-  #contact h1 { font-size: 1.5rem; gap: 0.5rem; }
-  #contact > div:first-child { flex: none; }
-  #contact .file-icon { font-size: 1.5rem; padding: 0.35rem; }
-  #contact h1 ~ div { flex-wrap: wrap; }
-  #contact-form { width: 100%; }
+  #contact { display: grid; grid-template-columns: 48px minmax(0, 1fr); gap: 12px; max-width: none; }
+  #contact .file-type {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
+    background: #f7f7f7;
+    border: 1px solid #e3e3e3;
+  }
+  #contact .file-icon { font-size: 24px; padding: 0; }
+  #contact .file-description { display: contents; }
+  #contact .file-title { grid-column: 2; font-size: 22px; font-weight: 650; line-height: 1.25; gap: 8px; padding: 0; }
+  #contact .file-title-copy { flex: 1; }
+  #contact .file-name { display: block; }
+  #contact .file-token {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border: 1px solid #c8e2ff;
+    border-radius: 8px;
+    background: #f5faff;
+    color: #2468b5;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  #contact h1 .file-favorite { margin: 0; }
+  #contact h1 .file-favorite button { width: 44px; height: 44px; display: grid; place-items: center; }
+  #contact .file-title-spacer { display: none; }
+  #contact .file-size { grid-column: 2; margin: 0; padding: 0; color: #636e7c; font-size: 14px; }
+  #contact .file-notes { grid-column: 1 / -1; margin: 4px 0; padding: 12px; border-radius: 8px; background: #f7f7f7; }
+  #contact .file-message { grid-column: 1 / -1; margin: 4px 0; }
+  #contact .file-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 0; }
+  #contact .file-actions button { width: 100%; min-height: 44px; }
+  #contact .file-actions form:first-child button { color: white; background: #3992ff; }
+  #contact-form { width: 100%; gap: 16px; }
+  #contact-form input,
+  #contact-form textarea,
+  #contact-form button { min-height: 44px; font-size: 16px; }
+  #contact-form textarea { min-height: 128px; resize: vertical; }
   #dropzone {
     width: 100%;
     max-width: 100%;
-    min-height: 10rem;
+    min-height: 11rem;
     height: auto;
     margin: 0 0 1rem;
-    border-width: 10px;
+    border-width: 2px;
+    border-color: #c8e2ff;
+    border-radius: 12px;
+    padding: 16px;
+    background: #f9fbff;
+    color: #636e7c;
     overflow-wrap: anywhere;
   }
   #contact-form label,
@@ -684,6 +727,7 @@ i {
   #contact-form .file-link-row > input { width: calc(100% - 3rem); }
   #contact-form > p:first-of-type,
   #contact-form .file-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem; }
+  #contact-form > p:first-of-type { margin: 0; }
   #contact-form > p:first-of-type > span,
   #contact-form > p:first-of-type > input[name="fileName"],
   #contact-form .file-link-row > label { grid-column: 1 / -1; width: 100%; margin-right: 0; }
@@ -691,7 +735,8 @@ i {
   #contact-form .file-link-row > input { width: 100%; }
   #contact-form > p:first-of-type button,
   #contact-form .file-link-row > button { margin-left: 0; }
-  #contact-form p:last-child { margin-left: 0; flex-wrap: wrap; }
+  #contact-form p:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0; }
+  #contact-form button[type="submit"] { color: white; background: #3992ff; }
   .new-page { flex-direction: column; padding: 0 !important; gap: 1rem !important; min-height: 100%; height: auto !important; }
   .new-page button { min-width: 0; padding: 1.5rem !important; font-size: 1.5rem !important; }
   .new-page button > div:first-child { font-size: 3rem !important; }
@@ -701,6 +746,9 @@ i {
 }
 body:has(.transfer-status) #detail {
   padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+}
+@media (max-width: 767px), (max-width: 1023px) and (max-height: 500px) and (pointer: coarse) {
+  body:has(.transfer-status) #detail { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px)); }
 }
 @media (prefers-reduced-motion: reduce) {
   .transfer-tape::before { animation: none; }

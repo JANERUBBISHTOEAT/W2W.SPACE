@@ -119,6 +119,35 @@ async function capture(page, testInfo, name) {
 
 async function sidebarWidth(page) { return (await page.locator("#sidebar").boundingBox()).width; }
 
+// These viewports run in touch contexts, so short landscape screens also use
+// the phone navigation even when their width exceeds the portrait breakpoint.
+const phoneViewport = ({ width, height }) => width < 768 || (width <= 1023 && height <= 500);
+
+async function phoneShell(page) {
+  await expect(page.locator("#sidebar")).toBeHidden();
+  const header = page.locator("#mobile-header");
+  await insideViewport(page, header);
+  expect((await header.boundingBox()).height).toBeCloseTo(56, 0);
+  const detail = await page.locator("#detail").boundingBox();
+  expect(detail.x).toBeCloseTo(0, 0);
+  expect(detail.width).toBeCloseTo(page.viewportSize().width, 0);
+  const search = page.locator("#mobile-search");
+  const create = page.locator("#mobile-new");
+  for (const control of [search, create]) {
+    await insideViewport(page, control);
+    const box = await control.boundingBox();
+    expect(box.width).toBe(44);
+    expect(box.height).toBe(44);
+  }
+  expect((await search.boundingBox()).y).toBeCloseTo((await create.boundingBox()).y, 0);
+  const shape = element => {
+    const style = getComputedStyle(element);
+    return { padding: style.padding, borderWidth: style.borderWidth, borderRadius: style.borderRadius, fontSize: style.fontSize };
+  };
+  expect(await search.evaluate(shape)).toEqual(await create.evaluate(shape));
+  return detail;
+}
+
 async function dragSidebar(page, x) {
   const box = await page.getByRole("separator", { name: "Resize sidebar" }).boundingBox();
   expect(box).not.toBeNull();
@@ -198,26 +227,35 @@ test.describe("responsive layout", () => {
       for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1024, height: 768 }]) {
         await page.setViewportSize(viewport);
         await page.goto(application.baseURL + fixture.filePath);
-        const expectedWidth = viewport.width < 768 ? 64 : 288;
-        await expect.poll(() => sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
+        const phone = phoneViewport(viewport);
+        if (phone) await phoneShell(page);
+        else await expect.poll(() => sidebarWidth(page)).toBeCloseTo(288, 0);
         await noHorizontalOverflow(page);
         await insideViewport(page, page.getByRole("button", { name: "Seed", exact: true }));
-        if (viewport.width < 768) {
-          await page.locator("#sidebar-toggle").click();
+        await capture(page, testInfo, `${browserName}-file-${viewport.width}x${viewport.height}`);
+        if (phone) {
+          const originalDetail = await page.locator("#detail").boundingBox();
+          await page.locator("#mobile-sidebar-toggle").click();
           await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "true");
+          await expect.poll(() => sidebarWidth(page)).toBeCloseTo(Math.min(320, viewport.width - 48), 0);
+          expect(await page.locator("#detail").boundingBox()).toEqual(originalDetail);
           await expect(page.getByRole("searchbox", { name: "Search files" })).toBeVisible();
-          await expect(page.getByRole("button", { name: "Close sidebar", exact: true })).toBeVisible();
+          await expect(page.locator(".sidebar-backdrop")).toBeVisible();
           await page.touchscreen.tap(viewport.width - 10, Math.floor(viewport.height / 2));
           await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-          await page.locator("#sidebar-toggle").click();
+          await page.locator("#mobile-search").click();
+          await expect(page.locator("#q")).toBeFocused();
+          expect(await page.locator("#detail").boundingBox()).toEqual(originalDetail);
           await page.keyboard.press("Escape");
           await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-          await page.locator("#sidebar-toggle").click();
+          await expect(page.locator("#mobile-search")).toBeFocused();
+          await page.locator("#mobile-sidebar-toggle").click();
         }
         await page.locator(`#sidebar nav a[href="${fixture.textPath}"]`).click();
         await editorReady(page);
         await expect(page.locator("#sidebar")).toHaveAttribute("data-mobile-open", "false");
-        expect(await sidebarWidth(page)).toBeCloseTo(expectedWidth, 0);
+        if (phone) await phoneShell(page);
+        else expect(await sidebarWidth(page)).toBeCloseTo(288, 0);
         await insideViewport(page, page.getByRole("button", { name: "Save", exact: true }));
         await insideViewport(page, page.getByRole("button", { name: "Close", exact: true }));
         await insideViewport(page, page.getByRole("combobox", { name: "Select programming language" }));
@@ -229,6 +267,10 @@ test.describe("responsive layout", () => {
         await page.getByRole("link", { name: "Home", exact: true }).click();
         await insideViewport(page, page.getByRole("textbox", { name: "Share token", exact: true }));
         await noHorizontalOverflow(page);
+        if (phone) {
+          await phoneShell(page);
+          await capture(page, testInfo, `${browserName}-home-toolbar-${viewport.width}x${viewport.height}`);
+        }
         await page.getByRole("button", { name: "New", exact: true }).click();
         await insideViewport(page, page.getByRole("button", { name: /New File/ }));
         await noHorizontalOverflow(page);
@@ -243,6 +285,36 @@ test.describe("responsive layout", () => {
           page.getByRole("textbox", { name: "Notes", exact: true }),
         ]) await insideContentWidth(page, control);
       }
+
+      // The mobile redesign must keep the text lifecycle usable through its
+      // actual controls, not just fit static editor fixtures into the viewport.
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.locator("#mobile-new").click();
+      await page.getByRole("button", { name: /New Text/ }).click();
+      await editorReady(page);
+      await page.evaluate(() => globalThis.monaco.editor.getEditors()[0].setValue("# Mobile saved note\nSaved from the phone toolbar."));
+      const savedPath = new URL(page.url()).pathname;
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Close", exact: true })).toBeVisible();
+      await capture(page, testInfo, `${browserName}-phone-saved-text-editor`);
+      await page.locator("#mobile-sidebar-toggle").click();
+      const savedLink = page.locator(`#sidebar nav a[href="${savedPath}"]`);
+      await expect(savedLink).toBeVisible();
+      await expect(savedLink).toContainText("Mobile saved note");
+      await capture(page, testInfo, `${browserName}-phone-saved-text-history`);
+      await page.locator("#sidebar-toggle").click();
+      await expect(page.locator("#sidebar")).toBeHidden();
+
+      await page.locator("#mobile-new").click();
+      await page.getByRole("button", { name: /New Text/ }).click();
+      await editorReady(page);
+      const cancelledToken = await page.getByRole("textbox", { name: "Token", exact: true }).inputValue();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page).toHaveURL(application.baseURL + "/");
+      const lookup = await page.request.post(application.baseURL + "/api/new/token", {
+        form: { intent: "acquireMagnet", token: cancelledToken },
+      });
+      expect((await lookup.json()).type).toBeNull();
     });
 
     test("real mobile seeding stays fixed and visible with versioned styles", async ({ page, context, application, browserName }, testInfo) => {
@@ -273,12 +345,21 @@ test.describe("responsive layout", () => {
         await insideViewport(page, page.locator(".transfer-tape--top"));
         await insideViewport(page, page.locator(".transfer-tape--bottom"));
         expect((await page.locator(".transfer-tape--top").boundingBox()).width).toBeGreaterThanOrEqual(viewport.width - 2);
-        expect((await page.locator("#sidebar").boundingBox()).x).toBeCloseTo(0, 0);
-        expect((await page.locator("#detail").boundingBox()).x).toBeCloseTo(await sidebarWidth(page), 0);
+        if (phoneViewport(viewport)) {
+          await phoneShell(page);
+          await expect(page.locator(".transfer-status-hint")).toBeHidden();
+        } else {
+          expect((await page.locator("#sidebar").boundingBox()).x).toBeCloseTo(0, 0);
+          expect((await page.locator("#detail").boundingBox()).x).toBeCloseTo(await sidebarWidth(page), 0);
+        }
         await noHorizontalOverflow(page);
         await capture(page, testInfo, `${browserName}-seeding-${viewport.width}x${viewport.height}`);
       }
-      await page.getByRole("button", { name: "Pause transfer animation", exact: true }).click();
+      await page.setViewportSize({ width: 390, height: 844 });
+      const pause = page.getByRole("button", { name: "Pause transfer animation", exact: true });
+      await insideViewport(page, pause);
+      const pauseBox = await pause.boundingBox();
+      await page.touchscreen.tap(pauseBox.x + pauseBox.width / 2, pauseBox.y + pauseBox.height / 2);
       await expect(page.locator(".transfer-status")).toContainText("Seeding");
       expect(await page.locator(".transfer-tape--top").evaluate(element => getComputedStyle(element, "::before").animationPlayState)).toBe("paused");
       await page.getByRole("link", { name: "Home", exact: true }).click();

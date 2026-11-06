@@ -137,7 +137,10 @@ async function openScenario(browser, state, scenario, viewport) {
   const response = await page.goto(state.application.baseURL + paths[scenario], { waitUntil: "networkidle" });
   expect(response.status()).toBe(200);
   expect(new URL(page.url()).pathname).toBe(paths[scenario]);
-  await expect(page.locator("#sidebar")).toBeVisible();
+  if (mode === "responsive" && state === current && viewport.width < 768) {
+    await expect(page.locator("#mobile-header")).toBeVisible();
+    await expect(page.locator("#sidebar")).not.toBeVisible();
+  } else await expect(page.locator("#sidebar")).toBeVisible();
   if (scenario === "new") await expect(page.getByRole("button", { name: /New File/ })).toBeVisible();
   if (scenario === "file") await expect(page.locator("#contact")).toContainText(filename);
   if (scenario === "edit") await expect(page.getByRole("textbox", { name: "Filename", exact: true })).toHaveValue(filename);
@@ -203,11 +206,45 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
   const page = after.page;
   const sidebar = await page.locator("#sidebar").boundingBox();
   const detail = await page.locator("#detail").boundingBox();
-  expect(sidebar).not.toBeNull();
   expect(detail).not.toBeNull();
-  expect(sidebar.x).toBe(0);
-  expect(sidebar.width).toBe(viewport.name === "desktop" ? 288 : 64);
-  expect(detail.x).toBeCloseTo(sidebar.x + sidebar.width, 1);
+  const boxes = {};
+  let mobileHeader = null;
+  if (viewport.name === "desktop") {
+    expect(sidebar).not.toBeNull();
+    expect(sidebar.x).toBe(0);
+    expect(sidebar.width).toBe(288);
+    expect(detail.x).toBeCloseTo(sidebar.x + sidebar.width, 1);
+  } else {
+    await expect(page.locator("#sidebar")).not.toBeVisible();
+    expect(sidebar).toBeNull();
+    mobileHeader = await page.locator("#mobile-header").boundingBox();
+    expect(mobileHeader).not.toBeNull();
+    expect(mobileHeader.x).toBe(0);
+    expect(mobileHeader.y).toBe(0);
+    expect(mobileHeader.width).toBe(viewport.width);
+    expect(mobileHeader.height).toBe(56);
+    expect(detail.x).toBe(0);
+    expect(detail.width).toBe(viewport.width);
+    expect(detail.y).toBeCloseTo(mobileHeader.y + mobileHeader.height, 1);
+    const search = page.locator("#mobile-search");
+    const create = page.locator("#mobile-new");
+    for (const button of [search, create]) {
+      await expect(button).toBeVisible();
+      await expect(button).toBeEnabled();
+      await expect(button).toBeInViewport({ ratio: 1 });
+    }
+    const searchBox = await search.boundingBox();
+    const newBox = await create.boundingBox();
+    expect({ width: searchBox.width, height: searchBox.height }).toEqual({ width: 44, height: 44 });
+    expect({ width: newBox.width, height: newBox.height }).toEqual({ width: searchBox.width, height: searchBox.height });
+    expect(newBox.y).toBe(searchBox.y);
+    expect(searchBox.x + searchBox.width <= newBox.x || newBox.x + newBox.width <= searchBox.x).toBe(true);
+    expect(searchBox.x).toBeGreaterThanOrEqual(0);
+    expect(newBox.x + newBox.width).toBeLessThanOrEqual(viewport.width);
+    expect(searchBox.y + searchBox.height).toBeLessThanOrEqual(mobileHeader.y + mobileHeader.height);
+    boxes.mobileSearch = searchBox;
+    boxes.mobileNew = newBox;
+  }
   expect(detail.width).toBeGreaterThan(240);
   expect(detail.x + detail.width).toBeLessThanOrEqual(viewport.width + 1);
   const overflow = await page.evaluate(() => {
@@ -222,7 +259,6 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
   expect(overflow.body).toBeLessThanOrEqual(1);
   expect(overflow.detail).toBeLessThanOrEqual(1);
 
-  const boxes = {};
   async function usable(locator, name) {
     await expect(locator).toBeVisible();
     await locator.scrollIntoViewIfNeeded();
@@ -244,7 +280,18 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     text: "#text-editor-header-right button:first-of-type",
   };
   const themeSelector = themeSelectors[scenario];
-  expect(await controlTheme(page.locator(themeSelector))).toEqual(await controlTheme(before.page.locator(themeSelector)));
+  const oldTheme = await controlTheme(before.page.locator(themeSelector));
+  const newTheme = await controlTheme(page.locator(themeSelector));
+  if (viewport.name === "mobile" && ["draft", "file", "edit", "text"].includes(scenario)) {
+    // The phone redesign makes Seed/Save primary actions while retaining the
+    // application font and rounded controls. Desktop styling stays unchanged.
+    expect(newTheme).toMatchObject({
+      fontFamily: oldTheme.fontFamily,
+      color: "rgb(255, 255, 255)",
+      backgroundColor: "rgb(57, 146, 255)",
+      borderRadius: "8px",
+    });
+  } else expect(newTheme).toEqual(oldTheme);
 
   if (scenario === "home") {
     const input = page.locator("#tokenInput");
@@ -294,12 +341,12 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
     boxes.editor = editor;
   }
   await testInfo.attach("responsive-layout", {
-    body: Buffer.from(JSON.stringify({ viewport, scenario, sidebar, detail, overflow, controls: boxes }, null, 2)),
+    body: Buffer.from(JSON.stringify({ viewport, scenario, sidebar, mobileHeader, detail, overflow, controls: boxes }, null, 2)),
     contentType: "application/json",
   });
   testInfo.annotations.push({
     type: "responsive visual comparison",
-    description: "Full before/after images retain intentional rail, resize control and wrapping changes. The new layout must fit its viewport, retain usable controls and preserve control theme; legacy mobile overflow is not an expected image.",
+    description: "Full before/after images retain intentional desktop resize controls, the equal-size mobile header actions and content wrapping changes. The new layout must fit its viewport, retain usable controls and preserve control theme; legacy mobile overflow is not an expected image.",
   });
 }
 
