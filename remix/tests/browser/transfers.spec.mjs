@@ -112,6 +112,40 @@ async function expectReloadConfirmation(page) {
   await expect(page.locator(".transfer-status-label")).toBeVisible();
 }
 
+test("a file can be selected again after publishing its token fails", async ({ browser, application }) => {
+  const tracker = await startTracker();
+  const sender = await localPeerContext(browser, application, tracker);
+  try {
+    const page = await sender.context.newPage();
+    await page.goto(application.baseURL + "/new");
+    await page.getByRole("button", { name: /New File/ }).click();
+    let attempts = 0;
+    await page.route(/\/api\/[^/]+\/token$/, (route) => {
+      attempts += 1;
+      if (attempts === 1) {
+        return route.fulfill({ status: 503, json: { error: "Try publishing again" } });
+      }
+      return route.continue();
+    });
+    const picker = page.locator("#fileInput");
+    const file = {
+      name: "w2w-retry.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("Same-file retry"),
+    };
+    await picker.setInputFiles(file);
+    await expect(page.getByText("Try publishing again")).toBeVisible();
+    await expect(picker).toHaveValue("");
+    await picker.setInputFiles(file);
+    await expect(page).toHaveURL(/\/files\/[a-f0-9]{40}\/?(?:\?.*)?$/);
+    expect(attempts).toBe(2);
+    expect(sender.pageErrors).toEqual([]);
+  } finally {
+    await sender.stop();
+    await tracker.stop();
+  }
+});
+
 test("a variable-length token starts a real download and transfers survive page navigation", async ({ browser, application }, testInfo) => {
   test.setTimeout(120000);
   const tracker = await startTracker();
@@ -311,7 +345,7 @@ test("short typing waits for Enter, pasting starts immediately, and six digits s
   await input.fill("");
   await page.evaluate((token) => navigator.clipboard.writeText(token), shortToken);
   await input.click();
-  await input.press("Control+V");
+  await input.press("ControlOrMeta+V");
   // The page clock remains paused: paste must issue its request immediately,
   // without waiting for the typing debounce to advance.
   await expect.poll(() => requests.length).toBe(3);

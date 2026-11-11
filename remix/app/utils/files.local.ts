@@ -26,6 +26,7 @@ export interface LocalFile {
 
 export const LOCAL_FILES_KEY = "w2w.files.v1";
 const changeEvent = "w2w:files-changed";
+const pastedFiles = new Map<string, File>();
 
 export function listLocalFiles(): LocalFile[] {
   if (typeof window === "undefined") return [];
@@ -78,8 +79,22 @@ export function createLocalFile(values: Partial<LocalFile> = {}): LocalFile {
   });
 }
 
+export function createPastedFile(file: File) {
+  const draft = createLocalFile({ displayName: file.name });
+  // Keep clipboard payloads in this tab, keyed to their own draft.
+  pastedFiles.set(draft.id, file);
+  return draft;
+}
+
+export function takePastedFile(id: string) {
+  const file = pastedFiles.get(id);
+  pastedFiles.delete(id);
+  return file;
+}
+
 export function removeLocalFile(id: string) {
   writeFiles(listLocalFiles().filter((file) => file.id !== id));
+  pastedFiles.delete(id);
 }
 
 export function rememberShare(share: PublicShare, direction: LocalFile["direction"] = "receive", draftId?: string): LocalFile {

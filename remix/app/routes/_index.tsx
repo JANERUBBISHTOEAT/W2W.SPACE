@@ -14,7 +14,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { resolveToken } from "~/utils/share.server";
-import { createLocalFile, getLocalFile, rememberShare } from "~/utils/files.local";
+import { createPastedFile, getLocalFile, rememberShare } from "~/utils/files.local";
 import { normalizeInfoHash } from "~/utils/infohash";
 import type { PublicShare } from "~/utils/files.local";
 import { verifyGoogleCredential } from "~/utils/google-auth.server";
@@ -243,33 +243,28 @@ export default function Index() {
     const handlePaste = (event: ClipboardEvent) => {
       const target = event.target;
       if (target instanceof HTMLElement && (target.closest("textarea, [contenteditable=true]") || (target instanceof HTMLInputElement && target.name !== "token"))) return;
-      const items = event.clipboardData?.items;
-      if (!items) return;
-      for (const item of items) {
-        if (item.kind === "file") {
-          const file = item.getAsFile();
-          if (!file) continue;
-          const previousUrl = localStorage.getItem("fileURL");
-          if (previousUrl) URL.revokeObjectURL(previousUrl);
-          localStorage.setItem("fileURL", URL.createObjectURL(file));
-          const draft = createLocalFile({ displayName: file.name });
-          const query = new URLSearchParams({ pasted: "true", fileName: file.name, mimeType: file.type });
-          navigate(`/files/${draft.id}/edit?${query}`);
-          return;
+      const file = event.clipboardData?.files.item(0);
+      if (file) {
+        event.preventDefault();
+        try {
+          const draft = createPastedFile(file);
+          navigate(`/files/${draft.id}/edit`);
+        } catch {
+          // The local store reports write failures to the user.
         }
-        if (item.kind === "string") {
-          item.getAsString((raw) => {
-            const text = raw.trim();
-            const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
-            if (!type) return;
-            if (type === "token") {
-              inputValueRef.current = text;
-              setTokenValue(text);
-            }
-            handleDownload(text, type);
-          });
-          return;
-        }
+        return;
+      }
+
+      const text = event.clipboardData?.getData("text/plain").trim();
+      if (!text) return;
+      if (/^\d+$/.test(text)) {
+        event.preventDefault();
+        inputValueRef.current = text;
+        setTokenValue(text);
+        handleDownload(text, "token");
+      } else if (text.startsWith("magnet:?")) {
+        event.preventDefault();
+        handleDownload(text, "magnet");
       }
     };
     document.addEventListener("paste", handlePaste);

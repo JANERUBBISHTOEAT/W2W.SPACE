@@ -18,7 +18,6 @@ export const loader = async ({ params }: LoaderFunctionArgs) => {
   return data({ fileId: params.fileId || "" });
 };
 
-// [x] Remove contact page, use edit page
 export default function File() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -34,7 +33,7 @@ export default function File() {
     window.history.replaceState({}, "", location.pathname);
   }, [location]);
 
-  const copyToken = (token: string) => async () => {
+  const copyToken = async (token: string) => {
     try {
       await navigator.clipboard.writeText(token);
       toast.success("Token copied to clipboard");
@@ -47,50 +46,41 @@ export default function File() {
   const { file: personalFile, loading, error } = useLocalFile(fileId);
   if (!personalFile) return <p>{loading ? "Loading…" : error || "This file is not in this browser."}</p>;
   const file = { ...personalFile.share, ...personalFile, filename: personalFile.displayName };
+  const token = file.token;
   return (
     <div id="contact">
       <div className="file-type">
-        <i
-          // alt={`${file.filename} ${file.token} avatar`}
-          key={file.magnet}
-          // src={file.magnet}
-          className={
-            (file
-              ? fileIconMap[file.type ?? "default"] || "fas fa-file"
-              : "fas fa-file-upload") + " fa-2x file-icon"
-          }
-        ></i>
+        <i className={`${fileIconMap[file.type ?? "default"] || "fas fa-file"} fa-2x file-icon`} aria-hidden="true" />
       </div>
 
       <div className="file-description">
         <h1 className="file-title">
-          <span
-            className="file-title-copy"
-            role="button"
-            tabIndex={0}
-            onClick={copyToken(file.token ?? "")}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                void copyToken(file.token ?? "")();
-              }
-            }}
-          >
-            {file.filename || file.token ? (
-              <>
-                <span className="file-name">{file.filename}</span>{" "}<span className="file-token">#{file.token}</span>
-              </>
-            ) : (
-              <i>No Name</i>
-            )}
-          </span>{" "}
+          {token ? (
+            <span
+              className="file-title-copy"
+              role="button"
+              tabIndex={0}
+              onClick={() => copyToken(token)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  void copyToken(token);
+                }
+              }}
+            >
+              <span className="file-name">{file.filename}</span>{" "}
+              <span className="file-token">#{token}</span>
+            </span>
+          ) : (
+            <span className="file-name file-title-copy">{file.filename || <i>No Name</i>}</span>
+          )}{" "}
           <Favorite file={personalFile} />
         </h1>
 
         <p className="file-title-spacer" aria-hidden="true" />
         {personalFile.status === "expired" ? <p className="file-message" role="status">This share has expired. Your personal notes are kept in this browser.</p> : null}
         {error ? <p className="file-message" role="alert">{error}</p> : null}
-        {file.size ? <p className="file-size">Size: {prettyBytes(file.size)}</p> : null}
+        {typeof file.size === "number" && file.size >= 0 ? <p className="file-size">Size: {prettyBytes(file.size)}</p> : null}
         {file.notes ? (
           <>
             <p className="file-notes">Notes: {file.notes}</p>
@@ -99,7 +89,6 @@ export default function File() {
 
         <div className="file-actions">
           <Form action="edit">
-            {/* [x]: Make buttons more descriptive (use seed etc.) */}
             <button type="submit">Seed</button>
           </Form>
 

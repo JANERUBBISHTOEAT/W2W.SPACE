@@ -29,9 +29,9 @@ export default defineConfig({
     },
   },
   ssr: {
-    external: ["crypto", "webtorrent", "../../public/webtorrent.min.js"],
+    external: ["crypto", "webtorrent"],
   },
   optimizeDeps: {
-    exclude: ["crypto", "webtorrent", "../../public/webtorrent.min.js"],
+    exclude: ["crypto", "webtorrent"],
   },
 });
