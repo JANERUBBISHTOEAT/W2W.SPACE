@@ -9,29 +9,23 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { fileIconMap, FIELD_MAX_SIZE } from "~/utils/constants";
-import { getLocalFile, putLocalFile, rememberShare, removeLocalFile, useLocalFile } from "~/utils/files.local";
+import { getLocalFile, putLocalFile, rememberShare, removeLocalFile, takePastedFile, useLocalFile } from "~/utils/files.local";
 import type { LocalFile, PublicShare } from "~/utils/files.local";
 import { seedFile } from "~/utils/webtorrent.client";
 import type { BrowserTorrent } from "~/utils/webtorrent.client";
 
-export const loader = async ({ params, request }: LoaderFunctionArgs) => {
-  const search = new URL(request.url).searchParams;
-  return data({
-    fileId: params.fileId || "",
-    pasted: search.get("pasted") === "true",
-    fileName: search.get("fileName") || "Pasted file",
-    mimeType: search.get("mimeType") || "",
-  });
+export const loader = async ({ params }: LoaderFunctionArgs) => {
+  return data({ fileId: params.fileId || "" });
 };
 
 export default function EditFile() {
-  const params = useLoaderData<typeof loader>();
-  const { file, loading, error } = useLocalFile(params.fileId);
+  const { fileId } = useLoaderData<typeof loader>();
+  const { file, loading, error } = useLocalFile(fileId);
   if (!file) return <p>{loading ? "Loading…" : error || "This file is not in this browser."}</p>;
-  return <Editor key={file.id} savedFile={file} pasted={params.pasted} fileName={params.fileName} mimeType={params.mimeType} />;
+  return <Editor key={file.id} savedFile={file} />;
 }
 
-function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFile; pasted: boolean; fileName: string; mimeType: string }) {
+function Editor({ savedFile }: { savedFile: LocalFile }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [file, setFile] = useState<File | null>(null);
@@ -50,9 +44,8 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
   }, []);
   const shownMessageKeyRef = useRef<string>();
 
-  const handleSubmit = useCallback((files: FileList | null) => {
-    const selectedFile = files?.[0];
-    if (!selectedFile || seedingRef.current) return;
+  const handleSubmit = useCallback((selectedFile: File) => {
+    if (seedingRef.current) return;
     const current = getLocalFile(savedFile.id);
     if (!current) return;
     const draftName = nameRef.current || selectedFile.name;
@@ -108,26 +101,19 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      const files = event.clipboardData?.files;
-      if (files?.length) handleSubmit(files);
+      const file = event.clipboardData?.files.item(0);
+      if (!file) return;
+      event.preventDefault();
+      handleSubmit(file);
     };
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
   }, [handleSubmit]);
 
   useEffect(() => {
-    if (!pasted) return;
-    const url = localStorage.getItem("fileURL");
-    if (!url) return;
-    localStorage.removeItem("fileURL");
-    void fetch(url).then((response) => response.blob()).then((blob) => {
-      const transfer = new DataTransfer();
-      transfer.items.add(new File([blob], fileName, { type: mimeType }));
-      handleSubmit(transfer.files);
-    }).catch(() => toast.error("Could not read the pasted file. Please select it again."))
-      .finally(() => URL.revokeObjectURL(url));
-  }, [pasted, fileName, mimeType, handleSubmit]);
-
+    const file = takePastedFile(savedFile.id);
+    if (file) handleSubmit(file);
+  }, [handleSubmit, savedFile.id]);
 
   useEffect(() => {
     const message = new URLSearchParams(location.search).get("message");
@@ -174,7 +160,11 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
         role="button"
         tabIndex={0}
         title="Sharing continues as you browse. Keep this tab open."
-        onDrop={(event) => { event.preventDefault(); handleSubmit(event.dataTransfer.files); }}
+        onDrop={(event) => {
+          event.preventDefault();
+          const file = event.dataTransfer.files.item(0);
+          if (file) handleSubmit(file);
+        }}
         onDragOver={(event) => event.preventDefault()}
         onClick={(event) => {
           if (event.target !== document.getElementById("fileInput")) document.getElementById("fileInput")?.click();
@@ -188,7 +178,11 @@ function Editor({ savedFile, pasted, fileName, mimeType }: { savedFile: LocalFil
       >
         <i className={`${file ? fileIconMap[file.type] || "fas fa-file" : "fas fa-file-upload"} fa-2x file-icon`} aria-hidden="true" />
         <div className={file ? "" : "grey"}>{file?.name || "Drag & Drop files here"}</div>
-        <input type="file" name="file" title="Upload file" id="fileInput" onChange={(event) => handleSubmit(event.target.files)} />
+        <input type="file" name="file" title="Upload file" id="fileInput" onChange={(event) => {
+          const file = event.currentTarget.files?.item(0);
+          event.currentTarget.value = "";
+          if (file) handleSubmit(file);
+        }} />
       </div>
       <p>
         <span>Name</span>

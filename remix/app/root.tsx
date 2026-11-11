@@ -29,7 +29,6 @@ import { useLocalTexts } from "~/utils/texts.local";
 
 export const links: LinksFunction = () => [
   { rel: "stylesheet", href: appStyles },
-  { rel: "stylesheet", href: "/css/all.min.css" },
   { rel: "stylesheet", href: textEditorStyles },
   { rel: "stylesheet", href: sidebarStyles },
 ];

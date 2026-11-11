@@ -24,8 +24,7 @@ const compiled = await build({
   }],
 });
 
-function browser() {
-  const records = new Map();
+function browser(records = new Map()) {
   const notifications = [];
   const module = { exports: {} };
   const storage = {
@@ -64,6 +63,22 @@ test("drafts have a stable local URL before a share or token exists", () => {
   assert.equal(store.getLocalFile(share.id).id, draft.id);
   assert.equal(store.getLocalFile(share.id.toUpperCase()).id, draft.id);
   assert.equal(store.listLocalFiles().length, 1);
+});
+
+test("pasted files are consumed once by their own draft in the originating tab", () => {
+  const first = browser();
+  const second = browser(first.records);
+  const firstFile = new File(["first payload"], "first.txt");
+  const secondFile = new File(["second payload"], "second.txt");
+  const firstDraft = first.store.createPastedFile(firstFile);
+  const secondDraft = second.store.createPastedFile(secondFile);
+
+  assert.equal(second.store.getLocalFile(firstDraft.id).displayName, firstFile.name);
+  assert.equal(second.store.takePastedFile(firstDraft.id), undefined);
+  assert.equal(first.store.takePastedFile(secondDraft.id), undefined);
+  assert.equal(first.store.takePastedFile(firstDraft.id), firstFile);
+  assert.equal(second.store.takePastedFile(secondDraft.id), secondFile);
+  assert.equal(first.store.takePastedFile(firstDraft.id), undefined);
 });
 
 test("personal metadata is isolated across browsers and deletion leaves the shared record intact", () => {

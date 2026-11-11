@@ -1,20 +1,13 @@
-import {
-  type LoaderFunctionArgs,
-  redirect,
-} from "react-router";
-import invariant from "tiny-invariant";
-import HashMap from "~/utils/hashmap.server";
+import { type LoaderFunctionArgs, redirect } from "react-router";
+import { resolveToken } from "~/utils/share.server";
 
 export const loader = async ({ params }: LoaderFunctionArgs) => {
-  invariant(params.token, "Missing token param");
-  const result = await HashMap.getBoth(params.token);
-  if (result.status === "deleted") return redirect("/deleted");
-  if (result.type === "text" && result.textId) {
-    return redirect(`/texts/${result.textId}`);
-  }
-  if (result.type === "file" && result.fileId) {
+  const token = params.token ?? "";
+  const result = await resolveToken(token);
+  if (result?.type === "text") return redirect(`/texts/${result.share.id}`);
+  if (result?.type === "file") {
     // The home page resolves the token and starts receiving the shared file.
-    return redirect(`/?token=${encodeURIComponent(params.token)}`);
+    return redirect(`/?token=${encodeURIComponent(token)}`);
   }
   return redirect("/?message=Invalid+Token");
 };

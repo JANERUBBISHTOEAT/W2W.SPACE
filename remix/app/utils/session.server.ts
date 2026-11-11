@@ -25,7 +25,7 @@ if (process.env.NODE_ENV === "production" && (!configuredSecret || configuredSec
 // Local development sessions expire on restart unless a secret is configured.
 const sessionSecret = configuredSecret || randomBytes(32).toString("hex");
 
-export const sessionStorage = createCookieSessionStorage<AppSessionData>({
+const sessionStorage = createCookieSessionStorage<AppSessionData>({
   cookie: {
     name: "session",
     secure: process.env.NODE_ENV === "production",
@@ -59,13 +59,4 @@ export async function getVisitorSession(
 ): Promise<SessionIdentity | undefined> {
   const session = await getSession(request);
   return session.get("visitor");
-}
-
-export async function requireSessionIdentity(request: Request): Promise<SessionIdentity> {
-  const session = await getSession(request);
-  const identity = session.get("user") || session.get("visitor");
-  if (!identity?.sub) {
-    throw new Response("Visit the home page to start a session", { status: 401 });
-  }
-  return identity;
 }

@@ -168,9 +168,9 @@ connection/port-exhaustion and rate/webseed fixes plus major protocol/piece
 dependency changes and a streamx pin. The tracker still requests vulnerable
 `ip`, so the scoped `@webpod/ip` replacement remains necessary; npm overrides
 do not rewrite precompiled browser bundles. These are static compatibility
-findings, not a 3.x installation or P2P test. The unused historical
-`public/webtorrent.min.js` embeds 1.9.7; the active application imports the npm
-bundle, and that historical file was left unchanged under the read-only check.
+findings, not a 3.x installation or P2P test. At the time of the check, the unused
+`public/webtorrent.min.js` contained 1.9.7. The application uses the npm browser
+bundle, and the obsolete copy has since been removed.
 
 Historical GitHub security-notification emails were checked against the current
 lockfile. They are not a live alert inventory. The repository's security page
