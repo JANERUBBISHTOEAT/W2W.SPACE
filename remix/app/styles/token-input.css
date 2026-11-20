@@ -94,7 +94,3 @@
   color: #627181;
   cursor: default;
 }
-
-.token-input-hint:empty {
-  margin-top: 0;
-}

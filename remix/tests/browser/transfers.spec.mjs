@@ -364,7 +364,7 @@ test("token guidance appears on hover without moving the input and closes with E
   await page.goto(application.baseURL + "/");
   const input = page.getByRole("textbox", { name: "Share token", exact: true });
   const tooltip = page.getByRole("tooltip");
-  const guidance = "Paste to receive, or press Enter after typing.";
+  const guidance = "Paste a token, or enter it and select Receive.";
   await expect(input).toBeVisible();
   expect(await input.getAttribute("title")).toBeNull();
   await expect(page.getByText("Receive using your token:", { exact: true })).toHaveCount(0);

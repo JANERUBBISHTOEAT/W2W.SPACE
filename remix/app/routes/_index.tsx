@@ -390,7 +390,7 @@ export default function Index() {
             </svg>
           </button>
         </form>
-        <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>
+        {tokenStatus && <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>}
       </div>
       <div id="fileList">
         {transfers.files.map((file) => <div key={file.url}><a href={file.url} download={file.name}>Download file{file.name}</a></div>)}
