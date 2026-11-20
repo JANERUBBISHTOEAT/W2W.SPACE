@@ -440,8 +440,75 @@ test.describe("responsive layout", () => {
     });
   });
 
+  test("keyboard and pasted tokens still submit on the home page", async ({ page, application, context }) => {
+    await localAssets(context, application);
+    const lookups = [];
+    await page.route("**/api/new/token", async (route) => {
+      lookups.push(new URLSearchParams(route.request().postData()).get("token"));
+      await route.fulfill({ json: { intent: "acquireMagnet", magnet: null, type: null } });
+    });
+    const input = page.getByRole("textbox", { name: "Share token" });
+    const receive = page.getByRole("button", { name: "Receive", exact: true });
+
+    await page.goto(application.baseURL + "/?token=56");
+    await expect.poll(() => [...lookups]).toEqual(["56"]);
+    await input.fill("78");
+    await input.press("Enter");
+    await expect.poll(() => [...lookups]).toEqual(["56", "78"]);
+    await expect(receive).toBeEnabled();
+
+    await input.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "90");
+      element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+    });
+    await expect.poll(() => [...lookups]).toEqual(["56", "78", "90"]);
+  });
+
   test.describe("touch viewports", () => {
     test.use({ isMobile: true, hasTouch: true, viewport: { width: 390, height: 844 } });
+
+    test("a tap receives short tokens without Return and coalesces six-digit auto-submit", async ({ page, context, application }) => {
+      await localAssets(context, application);
+      await page.setViewportSize({ width: 320, height: 568 });
+      const lookups = [];
+      let releaseLookup;
+      const holdLookup = new Promise((resolve) => { releaseLookup = resolve; });
+      await page.route("**/api/new/token", async (route) => {
+        const token = new URLSearchParams(route.request().postData()).get("token");
+        lookups.push(token);
+        if (token === "123456") await holdLookup;
+        await route.fulfill({ json: { intent: "acquireMagnet", magnet: null, type: null } });
+      });
+      await page.goto(application.baseURL);
+      const input = page.getByRole("textbox", { name: "Share token" });
+      const receive = page.getByRole("button", { name: "Receive", exact: true });
+      await insideViewport(page, receive);
+      await noHorizontalOverflow(page);
+      await expect(input).toHaveAttribute("inputmode", "numeric");
+      await expect(receive).toBeDisabled();
+      await input.fill("12");
+      await receive.tap();
+      await expect(page.getByRole("status")).toHaveText("No share found. Check the token and try again.");
+      expect(lookups).toEqual(["12"]);
+
+      await page.clock.install();
+      try {
+        await input.fill("123456");
+        await receive.tap();
+        await expect(receive).toBeDisabled();
+        await expect(page.getByRole("status")).toHaveText("Finding your share…");
+        await page.clock.runFor(750);
+        expect(lookups).toEqual(["12", "123456"]);
+      } finally {
+        releaseLookup();
+      }
+      await expect(receive).toBeEnabled();
+
+      await input.fill("654321");
+      await page.clock.runFor(750);
+      await expect.poll(() => [...lookups]).toEqual(["12", "123456", "654321"]);
+    });
 
     test("home fits the available height while long content can still scroll", async ({ page, context, application, browserName }, testInfo) => {
       const fixture = await fixtures(context, application, { notes: "A detailed note that must remain readable. ".repeat(300) });

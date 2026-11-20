@@ -288,7 +288,10 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
   const themeSelector = themeSelectors[scenario];
   const oldTheme = await controlTheme(before.page.locator(themeSelector));
   const newTheme = await controlTheme(page.locator(themeSelector));
-  if (viewport.name === "mobile" && ["draft", "file", "edit", "text"].includes(scenario)) {
+  if (scenario === "home") {
+    // Only the corners move from the input to the shared Receive control.
+    expect(newTheme).toEqual({ ...oldTheme, borderRadius: "0px" });
+  } else if (viewport.name === "mobile" && ["draft", "file", "edit", "text"].includes(scenario)) {
     // The phone redesign makes Seed/Save primary actions while retaining the
     // application font and rounded controls. Desktop styling stays unchanged.
     expect(newTheme).toMatchObject({
@@ -301,13 +304,29 @@ async function assertResponsiveLayout(before, after, scenario, viewport, testInf
 
   if (scenario === "home") {
     const input = page.locator("#tokenInput");
-    const initialBox = await input.boundingBox();
-    if (viewport.name === "desktop") {
-      expect(initialBox.y).toBe(215);
-      const oldBox = await before.page.locator("#tokenInput").boundingBox();
-      expect({ width: initialBox.width, height: initialBox.height }).toEqual({ width: oldBox.width, height: oldBox.height });
-    }
+    const receive = page.getByRole("button", { name: "Receive", exact: true });
+    const form = page.locator(".token-receive-form");
+    await usable(form, "receive form");
     await usable(input, "token input");
+    await usable(receive, "receive button");
+    const formBox = boxes["receive form"];
+    const inputBox = boxes["token input"];
+    const buttonBox = boxes["receive button"];
+    expect(formBox.width).toBeLessThanOrEqual(320);
+    expect(formBox.height).toBeGreaterThanOrEqual(48);
+    expect(formBox.x + formBox.width / 2).toBeCloseTo(detail.x + detail.width / 2, 0);
+    expect(inputBox.x).toBe(formBox.x + 1);
+    expect(inputBox.x + inputBox.width).toBe(buttonBox.x);
+    expect(buttonBox.x + buttonBox.width).toBe(formBox.x + formBox.width - 1);
+    expect(inputBox.y).toBe(buttonBox.y);
+    expect(inputBox.height).toBe(buttonBox.height);
+    expect(buttonBox.height).toBeGreaterThanOrEqual(44);
+    await expect(form).toHaveCSS("border-radius", "12px");
+    await expect(input).toHaveAttribute("placeholder", "Share token");
+    await expect(receive).toBeDisabled();
+    await input.fill("12345");
+    await expect(receive).toBeEnabled();
+    expect(await receive.boundingBox()).toEqual(buttonBox);
     await expect(page.getByText("Receive using your token:", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Paste a token, or type all 6 digits to start.", { exact: true })).toHaveCount(0);
     for (const [index, link] of (await page.locator(".footer a:visible").all()).entries()) await usable(link, `footer link ${index}`);
