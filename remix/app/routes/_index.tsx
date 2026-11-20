@@ -341,50 +341,55 @@ export default function Index() {
   return (
     <div id="index-page">
       <div className="token-input-area">
-        <Tooltip.Provider delayDuration={250}>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <input
-                type="text"
-                name="token"
-                aria-label="Share token"
-                inputMode="numeric"
-                autoComplete="off"
-                spellCheck={false}
-                value={tokenValue}
-                onChange={(event) => changeToken(event.target.value)}
-                onPaste={(event) => {
-                  const text = event.clipboardData.getData("text/plain").trim();
-                  const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
-                  if (!type) return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (type === "token") {
-                    inputValueRef.current = text;
-                    setTokenValue(text);
-                  }
-                  handleDownload(text, type);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
+        <form className="token-receive-form" data-error={tokenError} onSubmit={(event) => {
+          event.preventDefault();
+          if (!lookupPending) handleDownload(inputValueRef.current, "token");
+        }}>
+          <Tooltip.Provider delayDuration={250}>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <input
+                  type="text"
+                  name="token"
+                  aria-label="Share token"
+                  placeholder="Share token"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={tokenValue}
+                  onChange={(event) => changeToken(event.target.value)}
+                  onPaste={(event) => {
+                    const text = event.clipboardData.getData("text/plain").trim();
+                    const type = /^\d+$/.test(text) ? "token" : text.startsWith("magnet:?") ? "magnet" : null;
+                    if (!type) return;
                     event.preventDefault();
-                    handleDownload(event.currentTarget.value, "token");
-                  }
-                }}
-                aria-errormessage={tokenError ? "token-input-hint" : undefined}
-                aria-invalid={tokenError}
-                aria-busy={lookupPending}
-                className={tokenError ? "wrong-input" : ""}
-                id="tokenInput"
-              />
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content className="token-input-tooltip" side="top" sideOffset={8} collisionPadding={12}>
-                Paste to receive, or press Enter after typing.
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-        </Tooltip.Provider>
+                    event.stopPropagation();
+                    if (type === "token") {
+                      inputValueRef.current = text;
+                      setTokenValue(text);
+                    }
+                    handleDownload(text, type);
+                  }}
+                  aria-errormessage={tokenError ? "token-input-hint" : undefined}
+                  aria-invalid={tokenError}
+                  aria-busy={lookupPending}
+                  id="tokenInput"
+                />
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                <Tooltip.Content className="token-input-tooltip" side="top" sideOffset={8} collisionPadding={12}>
+                  Paste a token, or enter it and select Receive.
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
+          </Tooltip.Provider>
+          <button type="submit" className="token-receive-button" disabled={!/^\d{1,6}$/.test(tokenValue.trim()) || lookupPending}>
+            Receive
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M3 8h9m-4-4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </form>
         {tokenStatus && <span id="token-input-hint" className="token-input-hint" data-error={tokenError} role="status">{tokenStatus}</span>}
       </div>
       <div id="fileList">
